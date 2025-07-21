@@ -1,4 +1,6 @@
 // Local sendRequest function for DevExtreme compatibility
+import { fetchRoute, showNotification } from "../configuracion.js";
+
 function sendRequest(url, method, data) {
     var d = $.Deferred();
     method = method || "GET";
@@ -317,4 +319,14 @@ $(document).ready(async function (e) {
             ],
         })
         .dxDataGrid("instance");
+
+    // Global function to refresh the grid (can be called from modal)
+    window.refreshUsersGrid = function() {
+        $("#usersGrid").dxDataGrid("instance").refresh();
+    };
+
+    // Refresh button functionality
+    $("#refreshBtn").on("click", function() {
+        refreshUsersGrid();
+    });
 });
