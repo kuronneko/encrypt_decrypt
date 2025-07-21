@@ -7,22 +7,26 @@ function sendRequest(url, method, data) {
         data: data,
         cache: false,
         xhrFields: {
-            withCredentials: true
-        }
-    }).done(function (result) {
-        d.resolve(result);
-    }).fail(function (xhr) {
-        if (xhr && xhr.responseJSON && xhr.responseJSON.errors) {
-            Object.keys(xhr.responseJSON.errors).reverse().forEach(key => {
-                xhr.responseJSON.errors[key].forEach(errorMessage => {
-                    showNotification('error', errorMessage);
-                });
-            });
-        } else {
-            showNotification('error', 'Error al obtener los datos');
-        }
-        d.reject(xhr);
-    });
+            withCredentials: true,
+        },
+    })
+        .done(function (result) {
+            d.resolve(result);
+        })
+        .fail(function (xhr) {
+            if (xhr && xhr.responseJSON && xhr.responseJSON.errors) {
+                Object.keys(xhr.responseJSON.errors)
+                    .reverse()
+                    .forEach((key) => {
+                        xhr.responseJSON.errors[key].forEach((errorMessage) => {
+                            showNotification("error", errorMessage);
+                        });
+                    });
+            } else {
+                showNotification("error", "Error al obtener los datos");
+            }
+            d.reject(xhr);
+        });
     return d.promise();
 }
 
@@ -65,14 +69,16 @@ $(document).ready(async function (e) {
                 params.sort = JSON.stringify(loadOptions.sort);
             }
 
-            return sendRequest(tableDataUrl + '?' + $.param(params), "GET")
-                .then(function(result) {
-                    return {
-                        data: result.data,
-                        totalCount: result.totalCount
-                    };
-                });
-        }
+            return sendRequest(
+                tableDataUrl + "?" + $.param(params),
+                "GET"
+            ).then(function (result) {
+                return {
+                    data: result.data,
+                    totalCount: result.totalCount,
+                };
+            });
+        },
     });
 
     DevExpress.localization.locale("es-CL");
@@ -83,7 +89,7 @@ $(document).ready(async function (e) {
                 store: items,
                 // Enable server-side operations
                 paginate: true,
-                pageSize: 10
+                pageSize: 10,
             },
             // Enable remote operations
             remoteOperations: {
@@ -91,7 +97,7 @@ $(document).ready(async function (e) {
                 filtering: true,
                 sorting: true,
                 grouping: false,
-                summary: false
+                summary: false,
             },
             columnAutoWidth: true,
             showBorders: true, // mostrar bordes de la tabla
@@ -158,10 +164,7 @@ $(document).ready(async function (e) {
                                     if (result.isConfirmed) {
                                         let key = options.row.data.id; // Assuming 'id' is the key of the record
                                         $.ajax({
-                                            url:
-                                                "/users/" +
-                                                key +
-                                                "/delete/",
+                                            url: "/users/" + key + "/delete/",
                                             type: "DELETE",
                                             data: {
                                                 id: key,
@@ -194,9 +197,7 @@ $(document).ready(async function (e) {
                         let editIconUser = $("<a>")
                             .attr(
                                 "href",
-                                "/users/" +
-                                    options.row.data.id +
-                                    "/edit/"
+                                "/users/" + options.row.data.id + "/edit/"
                             )
                             .append(
                                 $("<i>")
@@ -215,7 +216,15 @@ $(document).ready(async function (e) {
                 {
                     dataField: "id",
                     caption: "ID",
-                    filterOperations: ["=", "<>", "<", "<=", ">", ">=", "between"],
+                    filterOperations: [
+                        "=",
+                        "<>",
+                        "<",
+                        "<=",
+                        ">",
+                        ">=",
+                        "between",
+                    ],
                     hidingPriority: 1, // prioridad para ocultar columna, 0 se oculta primero
                     allowEditing: true,
                     width: 70, // Set the width to a smaller size
@@ -236,9 +245,46 @@ $(document).ready(async function (e) {
                     allowEditing: true,
                 },
                 {
+                    dataField: "city",
+                    caption: "Ciudad",
+                    filterOperations: ["contains"],
+                    hidingPriority: 1, // prioridad para ocultar columna, 0 se oculta primero
+                    allowEditing: true,
+                },
+                {
+                    dataField: "postal_code",
+                    caption: "Código Postal",
+                    filterOperations: ["contains"],
+                    hidingPriority: 2, // prioridad para ocultar columna, 0 se oculta primero
+                    allowEditing: false,
+                    cellTemplate: function (container, options) {
+                        const postalCode = options.value || "N/A";
+                        container.append(`<span>${postalCode}</span>`);
+                    },
+                },
+                {
+                    dataField: "address",
+                    caption: "Dirección",
+                    filterOperations: ["contains"],
+                    hidingPriority: 2, // prioridad para ocultar columna, 0 se oculta primero
+                    allowEditing: false,
+                    cellTemplate: function (container, options) {
+                        const address = options.value || "N/A";
+                        container.append(`<span>${address}</span>`);
+                    },
+                },
+                {
                     dataField: "created_at",
                     caption: "Fecha de creación",
-                    filterOperations: ["=", "<>", "<", "<=", ">", ">=", "between"],
+                    filterOperations: [
+                        "=",
+                        "<>",
+                        "<",
+                        "<=",
+                        ">",
+                        ">=",
+                        "between",
+                    ],
                     hidingPriority: 6, // prioridad para ocultar columna, 0 se oculta primero
                     dataType: "datetime",
                     format: "dd/MM/yyyy HH:mm",
@@ -246,7 +292,15 @@ $(document).ready(async function (e) {
                 {
                     dataField: "updated_at",
                     caption: "Última actualización",
-                    filterOperations: ["=", "<>", "<", "<=", ">", ">=", "between"],
+                    filterOperations: [
+                        "=",
+                        "<>",
+                        "<",
+                        "<=",
+                        ">",
+                        ">=",
+                        "between",
+                    ],
                     hidingPriority: 6, // prioridad para ocultar columna, 0 se oculta primero
                     dataType: "datetime",
                     format: "dd/MM/yyyy HH:mm",
@@ -260,7 +314,9 @@ $(document).ready(async function (e) {
                         const isVerified = options.value ? true : false;
                         const icon = isVerified ? "fa-check" : "fa-times";
                         const color = isVerified ? "green" : "red";
-                        const text = isVerified ? "Verificado" : "No verificado";
+                        const text = isVerified
+                            ? "Verificado"
+                            : "No verificado";
 
                         container.append(
                             `<span style="color: ${color};">

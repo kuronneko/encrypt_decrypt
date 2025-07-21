@@ -137,4 +137,14 @@ class User extends Authenticatable
     {
         return new static();
     }
+
+    // Relationships
+
+    /**
+     * Get all locations for this user
+     */
+    public function locations()
+    {
+        return $this->hasMany(Location::class);
+    }
 }

@@ -8,11 +8,13 @@ class DevExtremeFilter
 {
     protected $query;
     protected $encryptedFieldsHandler;
+    protected $relatedModels;
 
-    public function __construct(Builder $query, $encryptedFieldsHandler = null)
+    public function __construct(Builder $query, $encryptedFieldsHandler = null, $relatedModels = [])
     {
         $this->query = $query;
         $this->encryptedFieldsHandler = $encryptedFieldsHandler;
+        $this->relatedModels = $relatedModels;
     }
 
     /**
@@ -57,6 +59,29 @@ class DevExtremeFilter
         $field = $filter[0];
         $operator = $filter[1];
         $value = $filter[2];
+
+        // Handle related model fields (e.g., locations.postal_code)
+        if (strpos($field, '.') !== false) {
+            return $this->applyRelatedModelFilter($field, $operator, $value);
+        }
+
+        // Check if this field might be a related model field without the relation prefix
+        // For example, 'postal_code' might actually be 'locations.postal_code'
+        foreach ($this->relatedModels as $relationName => $relatedModel) {
+            if ($relatedModel && $relatedModel->isEncryptedField($field)) {
+                // This field exists as an encrypted field in this related model
+                return $this->applyRelatedModelFilter($relationName . '.' . $field, $operator, $value);
+            }
+        }
+
+        // Check if this field might be a non-encrypted field in a related model
+        // We need to check the actual related model's fillable/table structure
+        foreach ($this->relatedModels as $relationName => $relatedModel) {
+            if ($this->isFieldInRelatedModel($relatedModel, $field)) {
+                // This field exists in this related model (but it's not encrypted)
+                return $this->applyRelatedModelFilter($relationName . '.' . $field, $operator, $value);
+            }
+        }
 
         // Handle encrypted fields if handler is provided
         if ($this->encryptedFieldsHandler && $this->encryptedFieldsHandler->isEncryptedField($field)) {
@@ -158,6 +183,156 @@ class DevExtremeFilter
     }
 
     /**
+     * Apply filter to related model fields (e.g., locations.postal_code)
+     */
+    protected function applyRelatedModelFilter(string $field, string $operator, $value): Builder
+    {
+        // Parse the relationship and field (e.g., locations.postal_code)
+        $parts = explode('.', $field, 2);
+        if (count($parts) !== 2) {
+            return $this->query;
+        }
+
+        $relationName = $parts[0];
+        $relationField = $parts[1];
+
+        // Check if we have a handler for this related model
+        $relatedModel = $this->relatedModels[$relationName] ?? null;
+
+        if ($relatedModel && $relatedModel->isEncryptedField($relationField)) {
+            // Handle encrypted fields in related models
+            return $this->applyEncryptedRelatedModelFilter($relationName, $relationField, $operator, $value, $relatedModel);
+        }
+
+        // Handle regular related model fields
+        return $this->applyRegularRelatedModelFilter($relationName, $relationField, $operator, $value);
+    }
+
+    /**
+     * Apply filter to encrypted fields in related models
+     */
+    protected function applyEncryptedRelatedModelFilter(string $relationName, string $field, string $operator, $value, $relatedModel): Builder
+    {
+        // For encrypted fields, we need to get all related records and filter in PHP
+        // This is less efficient but necessary for encrypted data
+
+        // First, get all records from the related table
+        $relatedModelInstance = get_class($relatedModel);
+        $allRelatedRecords = $relatedModelInstance::all();
+        $matchingIds = [];
+
+        foreach ($allRelatedRecords as $record) {
+            $decryptedValue = $record->{$field}; // This will auto-decrypt
+
+            if ($this->matchesOperator($decryptedValue, $operator, $value)) {
+                $matchingIds[] = $record->id;
+            }
+        }
+
+        // Now filter the main query based on matching related record IDs
+        if (!empty($matchingIds)) {
+            $this->query->whereHas($relationName, function($q) use ($matchingIds) {
+                $q->whereIn('id', $matchingIds);
+            });
+        } else {
+            // No matches found, ensure no results are returned
+            $this->query->whereRaw('1 = 0');
+        }
+
+        return $this->query;
+    }    /**
+     * Apply filter to regular fields in related models
+     */
+    protected function applyRegularRelatedModelFilter(string $relationName, string $field, string $operator, $value): Builder
+    {
+        $this->query->whereHas($relationName, function($q) use ($field, $operator, $value) {
+            switch ($operator) {
+                case 'contains':
+                    $q->where($field, 'like', '%' . $value . '%');
+                    break;
+                case '=':
+                    $q->where($field, $value);
+                    break;
+                case '<>':
+                    $q->where($field, '!=', $value);
+                    break;
+                case '>':
+                    $q->where($field, '>', $value);
+                    break;
+                case '<':
+                    $q->where($field, '<', $value);
+                    break;
+                case '>=':
+                    $q->where($field, '>=', $value);
+                    break;
+                case '<=':
+                    $q->where($field, '<=', $value);
+                    break;
+                case 'between':
+                    if (is_array($value) && count($value) >= 2) {
+                        $q->whereBetween($field, [$value[0], $value[1]]);
+                    }
+                    break;
+            }
+        });
+
+        return $this->query;
+    }
+
+    /**
+     * Check if a value matches the given operator
+     */
+    protected function matchesOperator($fieldValue, string $operator, $searchValue): bool
+    {
+        switch ($operator) {
+            case 'contains':
+                return stripos((string)$fieldValue, (string)$searchValue) !== false;
+            case '=':
+                return $fieldValue == $searchValue;
+            case '<>':
+                return $fieldValue != $searchValue;
+            case '>':
+                return $fieldValue > $searchValue;
+            case '<':
+                return $fieldValue < $searchValue;
+            case '>=':
+                return $fieldValue >= $searchValue;
+            case '<=':
+                return $fieldValue <= $searchValue;
+            default:
+                return false;
+        }
+    }
+
+    /**
+     * Check if a field exists in a related model
+     */
+    protected function isFieldInRelatedModel($relatedModel, string $field): bool
+    {
+        if (!$relatedModel) {
+            return false;
+        }
+
+        // Get the model's fillable fields
+        $fillable = $relatedModel->getFillable();
+
+        // Check if the field is in fillable array
+        if (!empty($fillable) && in_array($field, $fillable)) {
+            return true;
+        }
+
+        // If fillable is empty or field not in fillable, check actual table structure
+        try {
+            $tableName = $relatedModel->getTable();
+            $columns = \Illuminate\Support\Facades\Schema::getColumnListing($tableName);
+            return in_array($field, $columns);
+        } catch (\Exception $e) {
+            // If we can't get the table structure, return false
+            return false;
+        }
+    }
+
+    /**
      * Check if a field is a date field
      */
     protected function isDateField(string $field): bool
@@ -178,13 +353,29 @@ class DevExtremeFilter
         $this->query->where(function($q) use ($searchText, $searchableFields) {
             $regularFields = [];
             $encryptedFields = [];
+            $relatedFields = [];
 
-            // Separate regular and encrypted fields
+            // Separate regular, encrypted, and related fields
             foreach ($searchableFields as $field) {
-                if ($this->encryptedFieldsHandler && $this->encryptedFieldsHandler->isEncryptedField($field)) {
+                if (strpos($field, '.') !== false) {
+                    // Related model field
+                    $relatedFields[] = $field;
+                } elseif ($this->encryptedFieldsHandler && $this->encryptedFieldsHandler->isEncryptedField($field)) {
                     $encryptedFields[] = $field;
                 } else {
-                    $regularFields[] = $field;
+                    // Check if this field might be in a related model
+                    $isRelatedField = false;
+                    foreach ($this->relatedModels as $relationName => $relatedModel) {
+                        if ($relatedModel && ($relatedModel->isEncryptedField($field) || $this->isFieldInRelatedModel($relatedModel, $field))) {
+                            $relatedFields[] = $relationName . '.' . $field;
+                            $isRelatedField = true;
+                            break;
+                        }
+                    }
+
+                    if (!$isRelatedField) {
+                        $regularFields[] = $field;
+                    }
                 }
             }
 
@@ -203,6 +394,43 @@ class DevExtremeFilter
 
                 if (!empty($matchingIds)) {
                     $q->orWhereIn('id', $matchingIds);
+                }
+            }
+
+            // Apply search to related model fields
+            foreach ($relatedFields as $field) {
+                $parts = explode('.', $field, 2);
+                if (count($parts) === 2) {
+                    $relationName = $parts[0];
+                    $relationField = $parts[1];
+
+                    // Check if it's an encrypted field in the related model
+                    $relatedModel = $this->relatedModels[$relationName] ?? null;
+
+                    if ($relatedModel && $relatedModel->isEncryptedField($relationField)) {
+                        // Handle encrypted related field search
+                        $relatedModelInstance = get_class($relatedModel);
+                        $allRelatedRecords = $relatedModelInstance::all();
+                        $matchingIds = [];
+
+                        foreach ($allRelatedRecords as $record) {
+                            $decryptedValue = $record->{$relationField};
+                            if (stripos((string)$decryptedValue, (string)$searchText) !== false) {
+                                $matchingIds[] = $record->id;
+                            }
+                        }
+
+                        if (!empty($matchingIds)) {
+                            $q->orWhereHas($relationName, function($subQ) use ($matchingIds) {
+                                $subQ->whereIn('id', $matchingIds);
+                            });
+                        }
+                    } else {
+                        // Handle regular related field search
+                        $q->orWhereHas($relationName, function($subQ) use ($relationField, $searchText) {
+                            $subQ->where($relationField, 'like', '%' . $searchText . '%');
+                        });
+                    }
                 }
             }
         });
