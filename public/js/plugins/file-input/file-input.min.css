@@ -1,0 +1,37 @@
+/* File Input */
+.nicefileinput .NFI-filename{
+	font-size: 1rem;
+	color: #64748B;
+	line-height: 24px;
+	width: 76%;
+	padding:0.75rem 0.75rem 0.75rem 50px !important;
+	cursor: pointer;
+	background: #F1F5F9 url(/imagenes/clip.svg) 14px center no-repeat;
+	border: none;
+	border-radius: 0.5rem;
+}
+.nicefileinput .NFI-button{
+	/*font-size: 0.4em;
+	font-size: 0.4rem;
+	text-indent: -9999px;*/
+	color: #FEF8EC;
+	line-height: 20px;
+	width: 22%;
+	background: #e54800;
+	padding:14px;
+	border: none;
+	border-radius: 8px;
+	margin-left: 2%;
+}
+/*.nicefileinput .NFI-button:hover{ background-color: #fff;}*/
+.nicefileinput .NFI-filename:focus{ outline:none;}
+input[type="file"].nicefileinput { display:block;}
+
+@media(max-width: 550px){
+	.nicefileinput .NFI-filename{
+	width: 66%;
+}
+.nicefileinput .NFI-button{
+	width: 32%;
+}
+}
