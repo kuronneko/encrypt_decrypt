@@ -270,21 +270,6 @@ $(document).ready(async function (e) {
                     },
                 },
             ],
-            toolbar: {
-                items: [
-                    {
-                        location: "after",
-                        widget: "dxTextBox",
-                        options: {
-                            placeholder: "Buscar...",
-                            mode: "search",
-                            onValueChanged: function (e) {
-                                dataGrid.searchByText(e.value);
-                            },
-                        },
-                    },
-                ],
-            },
         })
         .dxDataGrid("instance");
 });
