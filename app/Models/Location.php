@@ -2,14 +2,15 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Factories\HasFactory;
-use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Crypt;
+use App\Traits\HandlesEncryptedFields;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use App\Traits\OptimizedEncryptedFields; // Using the optimized version for better performance
 
 class Location extends Model
 {
-    use HasFactory, OptimizedEncryptedFields;
+    use HasFactory, HandlesEncryptedFields;
 
     /**
      * Define which fields are encrypted

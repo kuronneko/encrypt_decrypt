@@ -9,12 +9,14 @@ class DevExtremeFilter
     protected $query;
     protected $encryptedFieldsHandler;
     protected $relatedModels;
+    protected $searchableFields;
 
-    public function __construct(Builder $query, $encryptedFieldsHandler = null, $relatedModels = [])
+    public function __construct(Builder $query, $encryptedFieldsHandler = null, $relatedModels = [], $searchableFields = [])
     {
         $this->query = $query;
         $this->encryptedFieldsHandler = $encryptedFieldsHandler;
         $this->relatedModels = $relatedModels;
+        $this->searchableFields = $searchableFields;
     }
 
     /**
@@ -59,6 +61,12 @@ class DevExtremeFilter
         $field = $filter[0];
         $operator = $filter[1];
         $value = $filter[2];
+
+        // Check if we have searchable fields restriction and enforce it
+        if (!empty($this->searchableFields) && !$this->isFieldSearchable($field)) {
+            // Field is not in searchableFields array, skip this filter
+            return $this->query;
+        }
 
         // Handle related model fields (e.g., locations.postal_code)
         if (strpos($field, '.') !== false) {
@@ -436,5 +444,32 @@ class DevExtremeFilter
         });
 
         return $this->query;
+    }
+
+    /**
+     * Check if a field is in the searchable fields list
+     */
+    protected function isFieldSearchable(string $field): bool
+    {
+        if (empty($this->searchableFields)) {
+            return true; // If no restrictions, all fields are searchable
+        }
+
+        // Direct match
+        if (in_array($field, $this->searchableFields)) {
+            return true;
+        }
+
+        // Check if field might be part of a related field (e.g., 'postal_code' could be 'locations.postal_code')
+        foreach ($this->searchableFields as $searchableField) {
+            if (strpos($searchableField, '.') !== false) {
+                $parts = explode('.', $searchableField, 2);
+                if (count($parts) === 2 && $parts[1] === $field) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 }

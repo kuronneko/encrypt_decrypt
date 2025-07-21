@@ -91,12 +91,12 @@ $(document).ready(async function (e) {
                 paginate: true,
                 pageSize: 10,
             },
-            // Enable remote operations
+            // Enable remote operations but disable grouping to prevent header filter requests
             remoteOperations: {
                 paging: true,
                 filtering: true,
                 sorting: true,
-                grouping: false,
+                grouping: false, // Keep disabled to prevent header filter from making separate requests
                 summary: false,
             },
             columnAutoWidth: true,
@@ -113,8 +113,8 @@ $(document).ready(async function (e) {
                 placeholder: "Buscar...",
             }, */
             headerFilter: {
-                // filtro para filtrar al seleccionar valores de la columna en la cabecera
-                visible: true,
+                // Disable header filter to prevent extra requests
+                visible: false,
             },
             filterRow: {
                 //lupita para buscar en columna
@@ -260,17 +260,6 @@ $(document).ready(async function (e) {
                     cellTemplate: function (container, options) {
                         const postalCode = options.value || "N/A";
                         container.append(`<span>${postalCode}</span>`);
-                    },
-                },
-                {
-                    dataField: "address",
-                    caption: "Dirección",
-                    filterOperations: ["contains"],
-                    hidingPriority: 2, // prioridad para ocultar columna, 0 se oculta primero
-                    allowEditing: false,
-                    cellTemplate: function (container, options) {
-                        const address = options.value || "N/A";
-                        container.append(`<span>${address}</span>`);
                     },
                 },
                 {

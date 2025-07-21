@@ -1,17 +1,36 @@
 <?php
 
-namespace App\Traits;
+namespace App\Components;
 
-use App\Components\DevExtremeFilter;
 use Illuminate\Http\Request;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\Log;
 
-trait DevExtremeOperations
+class DevExtremeHandler
 {
+    protected Builder $query;
+    protected array $config;
+    protected DevExtremeFilter $filterComponent;
+
+    public function __construct(Builder $query, array $config = [])
+    {
+        $this->query = $query;
+        $this->config = array_merge($this->getDefaultConfig(), $config);
+
+        // Initialize filter component
+        $this->filterComponent = new DevExtremeFilter(
+            $this->query,
+            $this->config['encryptedFieldsHandler'],
+            $this->config['relatedModels'],
+            $this->config['searchableFields']
+        );
+    }
+
     /**
-     * Handle DevExtreme list request with pagination, filtering, and sorting
+     * Handle DevExtreme request and return JSON response
      */
-    protected function handleDevExtremeRequest(Request $request, Builder $query, array $options = [])
+    public function handle(Request $request): JsonResponse
     {
         // Get parameters from DevExtreme
         $skip = $request->get('skip', 0);
@@ -28,35 +47,26 @@ trait DevExtremeOperations
             $sort = json_decode($sort, true);
         }
 
-        // Get configuration options
-        $searchableFields = $options['searchableFields'] ?? [];
-        $encryptedFieldsHandler = $options['encryptedFieldsHandler'] ?? null;
-        $relatedModels = $options['relatedModels'] ?? [];
-        $dataTransformer = $options['dataTransformer'] ?? null;
-
-        // Create filter component
-        $filterComponent = new DevExtremeFilter($query, $encryptedFieldsHandler, $relatedModels);
-
         // Apply global search if provided
-        if (!empty($searchText) && !empty($searchableFields)) {
-            $filterComponent->applyGlobalSearch($searchText, $searchableFields);
+        if (!empty($searchText) && !empty($this->config['searchableFields'])) {
+            $this->filterComponent->applyGlobalSearch($searchText, $this->config['searchableFields']);
         }
 
         // Apply column filters if provided
         if (!empty($filter) && is_array($filter)) {
-            $filterComponent->applyFilters($filter);
+            $this->filterComponent->applyFilters($filter);
         }
 
         // Check if we need to sort by encrypted related fields
-        $needsPostSorting = $this->needsPostSorting($sort, $relatedModels);
+        $needsPostSorting = $this->needsPostSorting($sort);
 
         if ($needsPostSorting) {
             // For encrypted field sorting, we need to get all data, transform it, then sort
-            $results = $query->get();
+            $results = $this->query->get();
 
             // Transform data first
-            if ($dataTransformer && is_callable($dataTransformer)) {
-                $results = $results->map($dataTransformer);
+            if ($this->config['dataTransformer'] && is_callable($this->config['dataTransformer'])) {
+                $results = $results->map($this->config['dataTransformer']);
             }
 
             // Apply sorting after transformation
@@ -70,17 +80,17 @@ trait DevExtremeOperations
 
         } else {
             // Apply SQL-based sorting if provided
-            $this->applySorting($query, $sort, $options['defaultSort'] ?? ['id' => 'desc'], $options);
+            $this->applySorting($sort);
 
             // Get total count before applying pagination
-            $totalCount = $query->count();
+            $totalCount = $this->query->count();
 
             // Apply pagination
-            $results = $query->skip($skip)->take($take)->get();
+            $results = $this->query->skip($skip)->take($take)->get();
 
             // Transform data if transformer is provided
-            if ($dataTransformer && is_callable($dataTransformer)) {
-                $results = $results->map($dataTransformer);
+            if ($this->config['dataTransformer'] && is_callable($this->config['dataTransformer'])) {
+                $results = $results->map($this->config['dataTransformer']);
             }
         }
 
@@ -93,10 +103,8 @@ trait DevExtremeOperations
     /**
      * Apply sorting to the query
      */
-    protected function applySorting(Builder $query, array $sort, array $defaultSort = [], array $options = [])
+    protected function applySorting(array $sort): void
     {
-        $relatedModels = $options['relatedModels'] ?? [];
-
         if (!empty($sort) && is_array($sort)) {
             foreach ($sort as $sortItem) {
                 if (isset($sortItem['selector'])) {
@@ -108,11 +116,11 @@ trait DevExtremeOperations
 
                     // Check if field contains dot notation (e.g., locations.postal_code)
                     if (strpos($field, '.') !== false) {
-                        $this->applyRelatedSorting($query, $field, $direction);
+                        $this->applyRelatedSorting($field, $direction);
                         $isRelatedField = true;
                     } else {
                         // Check if this field might be a related model field without the relation prefix
-                        foreach ($relatedModels as $relationName => $relatedModel) {
+                        foreach ($this->config['relatedModels'] as $relationName => $relatedModel) {
                             if ($relatedModel && $relatedModel->isEncryptedField($field)) {
                                 // This field exists as an encrypted field in this related model
                                 // For encrypted fields, we can't sort in SQL, so we'll skip sorting
@@ -122,7 +130,7 @@ trait DevExtremeOperations
                             } elseif ($relatedModel && $this->isFieldInRelatedModel($relatedModel, $field)) {
                                 // This field exists as a non-encrypted field in this related model
                                 // We can sort this using SQL joins
-                                $this->applyRelatedSorting($query, $relationName . '.' . $field, $direction);
+                                $this->applyRelatedSorting($relationName . '.' . $field, $direction);
                                 $isRelatedField = true;
                                 break;
                             }
@@ -131,14 +139,14 @@ trait DevExtremeOperations
 
                     // If it's not a related field, apply regular sorting
                     if (!$isRelatedField) {
-                        $query->orderBy($field, $direction);
+                        $this->query->orderBy($field, $direction);
                     }
                 }
             }
         } else {
             // Apply default sorting
-            foreach ($defaultSort as $field => $direction) {
-                $query->orderBy($field, $direction);
+            foreach ($this->config['defaultSort'] as $field => $direction) {
+                $this->query->orderBy($field, $direction);
             }
         }
     }
@@ -146,7 +154,7 @@ trait DevExtremeOperations
     /**
      * Apply sorting to related model fields
      */
-    protected function applyRelatedSorting(Builder $query, string $field, string $direction)
+    protected function applyRelatedSorting(string $field, string $direction): void
     {
         // Parse the relationship and field (e.g., locations.postal_code)
         $parts = explode('.', $field, 2);
@@ -159,7 +167,7 @@ trait DevExtremeOperations
 
         // For related model sorting, we need to join the related table
         // This assumes a one-to-one or many-to-one relationship
-        $query->join($relationName, function($join) use ($relationName) {
+        $this->query->join($relationName, function($join) use ($relationName) {
             $join->on('users.id', '=', $relationName . '.user_id');
         })->orderBy($relationName . '.' . $relationField, $direction);
     }
@@ -167,7 +175,7 @@ trait DevExtremeOperations
     /**
      * Check if we need to sort after data transformation (for encrypted fields)
      */
-    protected function needsPostSorting(array $sort, array $relatedModels): bool
+    protected function needsPostSorting(array $sort): bool
     {
         if (empty($sort)) {
             return false;
@@ -178,7 +186,7 @@ trait DevExtremeOperations
                 $field = $sortItem['selector'];
 
                 // Check if this is an encrypted field in any related model
-                foreach ($relatedModels as $relationName => $relatedModel) {
+                foreach ($this->config['relatedModels'] as $relationName => $relatedModel) {
                     if ($relatedModel && $relatedModel->isEncryptedField($field)) {
                         return true; // Only encrypted fields need post-sorting
                     }
@@ -252,5 +260,29 @@ trait DevExtremeOperations
             // If we can't get the table structure, return false
             return false;
         }
+    }
+
+    /**
+     * Get default configuration
+     */
+    protected function getDefaultConfig(): array
+    {
+        return [
+            'searchableFields' => [],
+            'encryptedFieldsHandler' => null,
+            'relatedModels' => [],
+            'defaultSort' => ['id' => 'desc'],
+            'dataTransformer' => null,
+        ];
+    }
+
+    /**
+     * Static factory method for quick creation with fresh query
+     */
+    public static function create(Builder $query, array $config = []): self
+    {
+        // Clone the query to ensure we start with a fresh state
+        $freshQuery = clone $query;
+        return new static($freshQuery, $config);
     }
 }
