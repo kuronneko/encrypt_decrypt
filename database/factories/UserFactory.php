@@ -26,9 +26,13 @@ class UserFactory extends Factory
         return [
             'name' => fake()->name(),
             'email' => fake()->unique()->safeEmail(),
-            'email_verified_at' => now(),
+            'email_verified_at' => fake()->randomElement([now(), now()->subDays(rand(1, 365)), null]), // Mix of verification dates and null
             'password' => static::$password ??= Hash::make('password'),
             'remember_token' => Str::random(10),
+            'created_at' => fake()->dateTimeBetween('-2 years', 'now'), // Users created over last 2 years
+            'updated_at' => function (array $attributes) {
+                return fake()->dateTimeBetween($attributes['created_at'], 'now');
+            },
         ];
     }
 
