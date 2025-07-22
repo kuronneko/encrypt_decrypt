@@ -6,6 +6,7 @@ use Illuminate\Http\Request;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
 
 class DevExtremeHandler
 {
@@ -47,6 +48,15 @@ class DevExtremeHandler
             $sort = json_decode($sort, true);
         }
 
+        // Log what we're processing
+        Log::info("DevExtremeHandler: Processing request", [
+            'skip' => $skip,
+            'take' => $take,
+            'searchText' => $searchText,
+            'filter' => $filter,
+            'sort' => $sort
+        ]);
+
         // Apply global search if provided
         if (!empty($searchText) && !empty($this->config['searchableFields'])) {
             $this->filterComponent->applyGlobalSearch($searchText, $this->config['searchableFields']);
@@ -57,11 +67,13 @@ class DevExtremeHandler
             $this->filterComponent->applyFilters($filter);
         }
 
-        // Check if we need to sort by encrypted related fields
-        $needsPostSorting = $this->needsPostSorting($sort);
+        // Check if we need post-processing (for any related fields or encrypted fields)
+        $needsPostProcessing = $this->needsPostProcessing($sort, $filter);
 
-        if ($needsPostSorting) {
-            // For encrypted field sorting, we need to get all data, transform it, then sort
+        if ($needsPostProcessing) {
+            Log::info("DevExtremeHandler: Using post-processing approach");
+
+            // Get all data without sorting, then process in memory
             $results = $this->query->get();
 
             // Transform data first
@@ -70,7 +82,9 @@ class DevExtremeHandler
             }
 
             // Apply sorting after transformation
-            $results = $this->applyPostSorting($results, $sort);
+            if (!empty($sort)) {
+                $results = $this->applyPostSorting($results, $sort);
+            }
 
             // Get total count
             $totalCount = $results->count();
@@ -79,8 +93,10 @@ class DevExtremeHandler
             $results = $results->slice($skip, $take)->values();
 
         } else {
-            // Apply SQL-based sorting if provided
-            $this->applySorting($sort);
+            Log::info("DevExtremeHandler: Using SQL-based approach");
+
+            // Apply SQL-based sorting only for main table fields
+            $this->applySafeMainTableSorting($sort);
 
             // Get total count before applying pagination
             $totalCount = $this->query->count();
@@ -101,9 +117,80 @@ class DevExtremeHandler
     }
 
     /**
-     * Apply sorting to the query
+     * Check if we need post-processing instead of SQL-based operations
      */
-    protected function applySorting(array $sort): void
+    protected function needsPostProcessing(array $sort, array $filter): bool
+    {
+        // Check sorting
+        if (!empty($sort)) {
+            foreach ($sort as $sortItem) {
+                if (isset($sortItem['selector'])) {
+                    $field = $sortItem['selector'];
+
+                    // If it's a related field or might be a related field, use post-processing
+                    if ($this->isRelatedField($field)) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        // Check filtering - if any filters involve related fields, use post-processing
+        if (!empty($filter)) {
+            if ($this->hasRelatedFieldFilters($filter)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Check if a field is a related field
+     */
+    protected function isRelatedField(string $field): bool
+    {
+        // Direct dot notation
+        if (strpos($field, '.') !== false) {
+            return true;
+        }
+
+        // Check if field exists in any related model
+        foreach ($this->config['relatedModels'] as $relationName => $relatedModel) {
+            if ($relatedModel && $this->isFieldInRelatedModel($relatedModel, $field)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Recursively check if filters contain related fields
+     */
+    protected function hasRelatedFieldFilters(array $filter): bool
+    {
+        // Handle simple filter array [field, operator, value]
+        if (count($filter) === 3 && !is_array($filter[0]) && is_string($filter[0])) {
+            return $this->isRelatedField($filter[0]);
+        }
+
+        // Handle complex nested filters
+        foreach ($filter as $filterItem) {
+            if (is_array($filterItem)) {
+                if ($this->hasRelatedFieldFilters($filterItem)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Apply safe sorting only to main table fields (avoid JOINs)
+     */
+    protected function applySafeMainTableSorting(array $sort): void
     {
         if (!empty($sort) && is_array($sort)) {
             foreach ($sort as $sortItem) {
@@ -111,34 +198,8 @@ class DevExtremeHandler
                     $field = $sortItem['selector'];
                     $direction = isset($sortItem['desc']) && $sortItem['desc'] ? 'desc' : 'asc';
 
-                    // Check if this is a related model field
-                    $isRelatedField = false;
-
-                    // Check if field contains dot notation (e.g., locations.postal_code)
-                    if (strpos($field, '.') !== false) {
-                        $this->applyRelatedSorting($field, $direction);
-                        $isRelatedField = true;
-                    } else {
-                        // Check if this field might be a related model field without the relation prefix
-                        foreach ($this->config['relatedModels'] as $relationName => $relatedModel) {
-                            if ($relatedModel && $relatedModel->isEncryptedField($field)) {
-                                // This field exists as an encrypted field in this related model
-                                // For encrypted fields, we can't sort in SQL, so we'll skip sorting
-                                // and let the frontend handle it after data transformation
-                                $isRelatedField = true;
-                                break;
-                            } elseif ($relatedModel && $this->isFieldInRelatedModel($relatedModel, $field)) {
-                                // This field exists as a non-encrypted field in this related model
-                                // We can sort this using SQL joins
-                                $this->applyRelatedSorting($relationName . '.' . $field, $direction);
-                                $isRelatedField = true;
-                                break;
-                            }
-                        }
-                    }
-
-                    // If it's not a related field, apply regular sorting
-                    if (!$isRelatedField) {
+                    // Only sort by main table fields to avoid JOIN issues
+                    if (!$this->isRelatedField($field)) {
                         $this->query->orderBy($field, $direction);
                     }
                 }
@@ -152,53 +213,7 @@ class DevExtremeHandler
     }
 
     /**
-     * Apply sorting to related model fields
-     */
-    protected function applyRelatedSorting(string $field, string $direction): void
-    {
-        // Parse the relationship and field (e.g., locations.postal_code)
-        $parts = explode('.', $field, 2);
-        if (count($parts) !== 2) {
-            return;
-        }
-
-        $relationName = $parts[0];
-        $relationField = $parts[1];
-
-        // For related model sorting, we need to join the related table
-        // This assumes a one-to-one or many-to-one relationship
-        $this->query->join($relationName, function($join) use ($relationName) {
-            $join->on('users.id', '=', $relationName . '.user_id');
-        })->orderBy($relationName . '.' . $relationField, $direction);
-    }
-
-    /**
-     * Check if we need to sort after data transformation (for encrypted fields)
-     */
-    protected function needsPostSorting(array $sort): bool
-    {
-        if (empty($sort)) {
-            return false;
-        }
-
-        foreach ($sort as $sortItem) {
-            if (isset($sortItem['selector'])) {
-                $field = $sortItem['selector'];
-
-                // Check if this is an encrypted field in any related model
-                foreach ($this->config['relatedModels'] as $relationName => $relatedModel) {
-                    if ($relatedModel && $relatedModel->isEncryptedField($field)) {
-                        return true; // Only encrypted fields need post-sorting
-                    }
-                }
-            }
-        }
-
-        return false;
-    }
-
-    /**
-     * Apply sorting after data transformation
+     * Apply sorting after data transformation (in-memory)
      */
     protected function applyPostSorting($results, array $sort)
     {
@@ -209,20 +224,31 @@ class DevExtremeHandler
         // Convert to array for sorting
         $resultsArray = $results->toArray();
 
+        // Apply sorting in reverse order (since we're doing stable sorts)
         foreach (array_reverse($sort) as $sortItem) {
             if (isset($sortItem['selector'])) {
                 $field = $sortItem['selector'];
                 $direction = isset($sortItem['desc']) && $sortItem['desc'] ? 'desc' : 'asc';
 
+                Log::info("DevExtremeHandler: Applying post-sort", [
+                    'field' => $field,
+                    'direction' => $direction
+                ]);
+
                 usort($resultsArray, function($a, $b) use ($field, $direction) {
                     $valueA = $a[$field] ?? '';
                     $valueB = $b[$field] ?? '';
+
+                    // Handle null values
+                    if ($valueA === null && $valueB === null) return 0;
+                    if ($valueA === null) return 1;
+                    if ($valueB === null) return -1;
 
                     // Handle numeric comparison
                     if (is_numeric($valueA) && is_numeric($valueB)) {
                         $result = $valueA <=> $valueB;
                     } else {
-                        // String comparison
+                        // String comparison (case insensitive)
                         $result = strcasecmp((string)$valueA, (string)$valueB);
                     }
 

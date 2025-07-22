@@ -25,21 +25,34 @@ class UserController extends Controller
      */
     public function list(Request $request)
     {
-        $query = User::with('locations');
+        // Use a fresh query with proper eager loading to avoid data conflicts
+        $query = User::with(['locations' => function($q) {
+            // Only get the first location to avoid data duplication
+            $q->orderBy('id', 'asc');
+        }]);
 
         $config = DevExtremeConfig::make()
             ->encryptedFieldsHandler(new User())
             ->relatedModel('locations', new Location())
-            ->searchableFields(['id', 'name', 'email', 'locations.city', 'locations.postal_code']) // Limited search fields
-            ->sortBy('id', 'desc') // Different default sort
+            ->searchableFields([
+                'id',           // User ID - main table
+                'name',         // User name - main table
+                'email',        // User email - main table (encrypted)
+                'locations.city',         // Location city - will be mapped to locations.city
+                'locations.postal_code'   // Location postal code - will be mapped to locations.postal_code (encrypted)
+            ])
+            ->sortBy('id', 'desc')
             ->transform(function ($user) {
+                // Get the first location (or null if none exists)
                 $location = $user->locations->first();
+
+                // Return a clean, predictable data structure
                 return [
                     'id' => $user->id,
                     'name' => $user->name,
                     'email' => $user->email, // Auto-decrypted by User model accessor
-                    'city' => $location?->city,
-                    'postal_code' => $location?->postal_code, // Auto-decrypted by Location model
+                    'city' => $location?->city ?? '',
+                    'postal_code' => $location?->postal_code ?? '', // Auto-decrypted by Location model
                     'email_verified_at' => $user->email_verified_at,
                     'created_at' => $user->created_at->format('Y-m-d H:i:s'),
                     'updated_at' => $user->updated_at->format('Y-m-d H:i:s')
