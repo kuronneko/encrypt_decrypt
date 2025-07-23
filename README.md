@@ -508,6 +508,7 @@ $(document).ready(async function (e) {
 
     let tableDataUrl = `/users/list/`;
 
+    let detailGrid;
     let items = new DevExpress.data.CustomStore({
         key: "id",
         load: function (loadOptions) {
@@ -558,19 +559,27 @@ $(document).ready(async function (e) {
                 paginate: true,
                 pageSize: 10,
             },
+
+            remoteOperations: {
                 paging: true,
                 filtering: true,
                 sorting: true,
-                grouping: false, 
+                grouping: false,
                 summary: false,
             },
             columnAutoWidth: true,
             showBorders: true,
-            hoverStateEnabled: true, 
+            hoverStateEnabled: true,
             columnHidingEnabled: true,
-            allowColumnReordering: true, 
-            wordWrapEnabled: true, 
-            headerFilter: {               
+            allowColumnReordering: true,
+            wordWrapEnabled: true,
+            /*            searchPanel: {
+                // 1 panel para buscar palabras
+                visible: true,
+                width: "90%",
+                placeholder: "Buscar...",
+            }, */
+            headerFilter: {
                 visible: false,
             },
             filterRow: {
@@ -594,6 +603,109 @@ $(document).ready(async function (e) {
                 enabled: false,
                 mode: "select",
             },
+            columns: [
+                {
+                    dataField: "id",
+                    caption: "ID",
+                    filterOperations: [
+                        "=",
+                        "<>",
+                        "<",
+                        "<=",
+                        ">",
+                        ">=",
+                        "between",
+                    ],
+                    hidingPriority: 1,
+                    allowEditing: true,
+                    width: 70,
+                    dataType: "number",
+                },
+                {
+                    dataField: "name",
+                    caption: "Nombre",
+                    filterOperations: ["contains"],
+                    hidingPriority: 1,
+                    allowEditing: true,
+                },
+                {
+                    dataField: "email",
+                    caption: "Email",
+                    filterOperations: ["contains"],
+                    hidingPriority: 1,
+                    allowEditing: true,
+                },
+                {
+                    dataField: "city",
+                    caption: "Ciudad",
+                    filterOperations: ["contains"],
+                    hidingPriority: 1,
+                    allowEditing: true,
+                },
+                {
+                    dataField: "postal_code",
+                    caption: "Código Postal",
+                    filterOperations: ["contains"],
+                    hidingPriority: 2,
+                    allowEditing: false,
+                    cellTemplate: function (container, options) {
+                        const postalCode = options.value || "N/A";
+                        container.append(`<span>${postalCode}</span>`);
+                    },
+                },
+                {
+                    dataField: "created_at",
+                    caption: "Fecha de creación",
+                    filterOperations: [
+                        "=",
+                        "<>",
+                        "<",
+                        "<=",
+                        ">",
+                        ">=",
+                        "between",
+                    ],
+                    hidingPriority: 6,
+                    dataType: "datetime",
+                    format: "dd/MM/yyyy HH:mm",
+                },
+                {
+                    dataField: "updated_at",
+                    caption: "Última actualización",
+                    filterOperations: [
+                        "=",
+                        "<>",
+                        "<",
+                        "<=",
+                        ">",
+                        ">=",
+                        "between",
+                    ],
+                    hidingPriority: 6,
+                    dataType: "datetime",
+                    format: "dd/MM/yyyy HH:mm",
+                },
+                {
+                    dataField: "email_verified_at",
+                    caption: "Email verificado",
+                    filterOperations: ["contains"],
+                    hidingPriority: 6,
+                    cellTemplate: function (container, options) {
+                        const isVerified = options.value ? true : false;
+                        const icon = isVerified ? "fa-check" : "fa-times";
+                        const color = isVerified ? "green" : "red";
+                        const text = isVerified
+                            ? "Verificado"
+                            : "No verificado";
+
+                        container.append(
+                            `<span style="color: ${color};">
+                                <i class="fa-solid ${icon}"></i> ${text}
+                            </span>`
+                        );
+                    },
+                },
+            ],
         })
         .dxDataGrid("instance");
 
