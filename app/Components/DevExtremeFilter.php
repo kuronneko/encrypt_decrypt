@@ -154,16 +154,31 @@ class DevExtremeFilter
     }
 
     /**
-     * Apply filter to encrypted fields in related models
+     * Apply filter to encrypted fields in related models using optimized caching
      */
     protected function applyEncryptedRelatedModelFilter(string $relationName, string $field, string $operator, $value, $relatedModel): Builder
     {
-        Log::info("DevExtremeFilter: Applying encrypted related field filter", [
+        Log::info("DevExtremeFilter: Applying encrypted related field filter with caching", [
             'relation' => $relationName,
-            'field' => $field
+            'field' => $field,
+            'operator' => $operator
         ]);
 
-        // For encrypted fields, we need to get all related records and filter in PHP
+        // Use the optimized cached method from AdvancedOptimizedEncryptedFields trait
+        if ($this->encryptedFieldsHandler && method_exists($this->encryptedFieldsHandler, 'applyEncryptedRelatedModelFilter')) {
+            return $this->encryptedFieldsHandler->applyEncryptedRelatedModelFilter(
+                $this->query,
+                $relationName,
+                $field,
+                $operator,
+                $value,
+                $relatedModel
+            );
+        }
+
+        // Fallback to the old method if the optimized one isn't available
+        Log::warning("DevExtremeFilter: Falling back to non-cached method for encrypted related field");
+
         $relatedModelInstance = get_class($relatedModel);
         $allRelatedRecords = $relatedModelInstance::all();
         $matchingIds = [];
