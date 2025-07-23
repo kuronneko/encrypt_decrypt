@@ -468,30 +468,142 @@ LOG_LEVEL=debug
 Ejemplo de configuración del DataGrid:
 
 ```javascript
-$("#dataGrid").dxDataGrid({
-    dataSource: {
-        store: {
-            type: "odata",
-            url: "/users/list",
-            key: "id"
-        }
-    },
-    remoteOperations: {
-        filtering: true,
-        sorting: true,
-        paging: true
-    },
-    columns: [
-        { dataField: "id", caption: "ID" },
-        { dataField: "name", caption: "Nombre" },
-        { dataField: "email", caption: "Email" },
-        { dataField: "city", caption: "Ciudad" },
-        { dataField: "postal_code", caption: "Código Postal" },
-        { dataField: "address", caption: "Dirección" }
-    ],
-    filterRow: { visible: true },
-    searchPanel: { visible: true },
-    paging: { pageSize: 10 }
+function sendRequest(url, method, data) {
+    var d = $.Deferred();
+    method = method || "GET";
+    $.ajax(url, {
+        method: method || "GET",
+        data: data,
+        cache: false,
+        xhrFields: {
+            withCredentials: true,
+        },
+    })
+        .done(function (result) {
+            d.resolve(result);
+        })
+        .fail(function (xhr) {
+            if (xhr && xhr.responseJSON && xhr.responseJSON.errors) {
+                Object.keys(xhr.responseJSON.errors)
+                    .reverse()
+                    .forEach((key) => {
+                        xhr.responseJSON.errors[key].forEach((errorMessage) => {
+                            showNotification("error", errorMessage);
+                        });
+                    });
+            } else {
+                showNotification("error", "Error al obtener los datos");
+            }
+            d.reject(xhr);
+        });
+    return d.promise();
+}
+
+$(document).ready(async function (e) {
+    $.ajaxSetup({
+        headers: {
+            "X-CSRF-TOKEN": $('meta[name="csrf-token"]').attr("content"),
+        },
+    });
+
+    let tableDataUrl = `/users/list/`;
+
+    let items = new DevExpress.data.CustomStore({
+        key: "id",
+        load: function (loadOptions) {
+            // Prepare parameters for server-side processing
+            let params = {};
+
+            // Pagination parameters
+            if (loadOptions.skip !== undefined) {
+                params.skip = loadOptions.skip;
+            }
+            if (loadOptions.take !== undefined) {
+                params.take = loadOptions.take;
+            }
+
+            // Search parameters
+            if (loadOptions.searchValue) {
+                params.searchValue = loadOptions.searchValue;
+            }
+
+            // Filter parameters
+            if (loadOptions.filter) {
+                params.filter = JSON.stringify(loadOptions.filter);
+            }
+
+            // Sort parameters
+            if (loadOptions.sort) {
+                params.sort = JSON.stringify(loadOptions.sort);
+            }
+
+            return sendRequest(
+                tableDataUrl + "?" + $.param(params),
+                "GET"
+            ).then(function (result) {
+                return {
+                    data: result.data,
+                    totalCount: result.totalCount,
+                };
+            });
+        },
+    });
+
+    DevExpress.localization.locale("es-CL");
+
+    const dataGrid = $("#usersGrid")
+        .dxDataGrid({
+            dataSource: {
+                store: items,
+                paginate: true,
+                pageSize: 10,
+            },
+                paging: true,
+                filtering: true,
+                sorting: true,
+                grouping: false, 
+                summary: false,
+            },
+            columnAutoWidth: true,
+            showBorders: true,
+            hoverStateEnabled: true, 
+            columnHidingEnabled: true,
+            allowColumnReordering: true, 
+            wordWrapEnabled: true, 
+            headerFilter: {               
+                visible: false,
+            },
+            filterRow: {
+                visible: true,
+                applyFilter: "auto",
+                betweenStartText: "Inicio",
+                betweenEndText: "Fin",
+            },
+            pager: {
+                allowedPageSizes: [10, 25, 50, 100],
+                showInfo: true,
+                showNavigationButtons: true,
+                showPageSizeSelector: true,
+                visible: "auto",
+            },
+            paging: {
+                pageSize: 10,
+            },
+
+            columnChooser: {
+                enabled: false,
+                mode: "select",
+            },
+        })
+        .dxDataGrid("instance");
+
+    window.refreshUsersGrid = function() {
+        $("#usersGrid").dxDataGrid("instance").refresh();
+    };
+
+    $("#refreshBtn").on("click", function() {
+        refreshUsersGrid();
+    });
 });
 ```
 
