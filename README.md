@@ -26,10 +26,132 @@ app/
 │   ├── User.php                   # Modelo con campos encriptados
 │   └── Location.php               # Modelo relacionado
 └── Traits/
-    └── HandlesEncryptedFields.php # Trait para campos encriptados
+    ├── HandlesEncryptedFields.php           # Trait básico para campos encriptados
+    ├── OptimizedEncryptedFields.php         # Trait optimizado con caché
+    └── AdvancedOptimizedEncryptedFields.php # Trait avanzado con caché y hash mapping
 ```
 
 ## 🔧 Instalación y Configuración
+
+## 🚀 Traits para Campos Encriptados
+
+Este sistema incluye tres traits diferentes para manejar campos encriptados, cada uno optimizado para diferentes casos de uso:
+
+### 1. HandlesEncryptedFields (Básico)
+Trait básico que proporciona funcionalidad fundamental para campos encriptados.
+
+### 2. OptimizedEncryptedFields (Optimizado)  
+Versión mejorada con caché para mejor rendimiento en aplicaciones medianas.
+
+### 3. AdvancedOptimizedEncryptedFields (Avanzado) ⭐
+**Recomendado para aplicaciones grandes con muchos datos encriptados**
+
+Trait más avanzado que incluye:
+
+- ✅ **Hash Mapping**: Para búsquedas exactas ultra-rápidas
+- ✅ **Caché Inteligente**: Sistema de caché multinivel con diferentes duraciones
+- ✅ **Búsqueda Multi-Modelo**: Búsqueda simultánea en múltiples modelos relacionados
+- ✅ **Procesamiento por Chunks**: Manejo eficiente de grandes datasets
+- ✅ **Auto-limpieza de Caché**: Limpieza automática cuando los datos cambian
+
+#### Configuración del Trait Avanzado
+
+```php
+<?php
+// app/Models/User.php
+
+namespace App\Models;
+
+use App\Traits\AdvancedOptimizedEncryptedFields;
+use Illuminate\Foundation\Auth\User as Authenticatable;
+
+class User extends Authenticatable
+{
+    use AdvancedOptimizedEncryptedFields; // ← Usar el trait avanzado
+
+    // Configurar duración del caché (opcional)
+    protected int $encryptedFieldsCacheDuration = 120;    // 2 horas para búsquedas
+    protected int $hashMappingCacheDuration = 480;        // 8 horas para hash mapping
+
+    protected $encryptedFields = [
+        'email',
+        'telephone',
+    ];
+
+    // ... resto de la configuración del modelo
+}
+```
+
+#### Características Avanzadas
+
+**Hash Mapping para Búsquedas Exactas:**
+```php
+// Búsquedas exactas usan hash mapping (ultra-rápido)
+$users = User::where('email', '=', 'usuario@email.com')->get();
+
+// El sistema crea un hash del valor y lo busca directamente
+// sin necesidad de desencriptar todos los registros
+```
+
+**Búsqueda Multi-Modelo:**
+```php
+// En el controlador usando DevExtremeHandler
+$config = DevExtremeConfig::make()
+    ->encryptedFieldsHandler(new User())
+    ->relatedModel('locations', new Location())
+    ->searchableFields([
+        'name',
+        'email',                    // Campo encriptado del modelo principal
+        'locations.address',        // Campo encriptado del modelo relacionado
+        'locations.postal_code',    // Otro campo encriptado relacionado
+    ])
+    ->build();
+
+// El trait maneja automáticamente la búsqueda en ambos modelos
+// y optimiza las consultas usando caché y hash mapping
+```
+
+**Control Manual del Caché:**
+```php
+// Limpiar caché de un modelo específico
+$user = new User();
+$user->clearEncryptedFieldsCache();
+
+// Limpiar caché de múltiples modelos relacionados
+$user->clearAllRelatedEncryptedCache([
+    new Location(),
+    new Company(),
+]);
+
+// Limpiar hash mapping de un campo específico
+$user->clearHashMappingCache('email');
+```
+
+**Configuración de Rendimiento:**
+```php
+// En tu modelo, puedes ajustar la configuración de caché
+class User extends Authenticatable
+{
+    use AdvancedOptimizedEncryptedFields;
+
+    // Para aplicaciones con datos muy estables
+    protected int $encryptedFieldsCacheDuration = 240;   // 4 horas
+    protected int $hashMappingCacheDuration = 1440;      // 24 horas
+
+    // Para aplicaciones con datos que cambian frecuentemente
+    protected int $encryptedFieldsCacheDuration = 60;    // 1 hora
+    protected int $hashMappingCacheDuration = 120;       // 2 horas
+}
+```
+
+**Comparación de Rendimiento:**
+
+| Trait | Búsqueda Exacta | Búsqueda Contiene | Multi-Modelo | Grandes Datasets |
+|-------|----------------|-------------------|--------------|------------------|
+| HandlesEncryptedFields | ❌ Lento | ❌ Lento | ❌ Manual | ❌ Problemas |
+| OptimizedEncryptedFields | ✅ Rápido | ✅ Rápido | ⚠️ Limitado | ⚠️ Aceptable |
+| AdvancedOptimizedEncryptedFields | ⭐ Ultra-rápido | ⭐ Muy rápido | ⭐ Automático | ⭐ Excelente |
+
 
 ### 1. Configurar el Modelo Principal
 
@@ -39,13 +161,17 @@ app/
 
 namespace App\Models;
 
-use App\Traits\HandlesEncryptedFields;
+use App\Traits\AdvancedOptimizedEncryptedFields; // ← Usar el trait avanzado
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Support\Facades\Crypt;
 
 class User extends Authenticatable
 {
-    use HandlesEncryptedFields;
+    use AdvancedOptimizedEncryptedFields; // ← Recomendado para mejor rendimiento
+
+    // Configuración del caché (opcional)
+    protected int $encryptedFieldsCacheDuration = 120;    // 2 horas
+    protected int $hashMappingCacheDuration = 480;        // 8 horas
 
     // Definir campos encriptados
     protected $encryptedFields = [
@@ -97,16 +223,18 @@ class User extends Authenticatable
 
 namespace App\Models;
 
-use App\Traits\HandlesEncryptedFields;
+use App\Traits\AdvancedOptimizedEncryptedFields; // ← Usar el trait avanzado
 use Illuminate\Database\Eloquent\Model;
 
 class Location extends Model
 {
-    use HandlesEncryptedFields;
+    use AdvancedOptimizedEncryptedFields;
 
     protected $encryptedFields = [
         'postal_code',
         'address',
+        'region',
+        'notes',
     ];
 
     protected $fillable = [
@@ -114,6 +242,8 @@ class Location extends Model
         'city',
         'postal_code',
         'address',
+        'region',
+        'notes',
     ];
 
     // Implementar accessors/mutators como en User.php
@@ -432,7 +562,7 @@ $config = DevExtremeConfig::make()
 **Solución:** 
 1. Verificar que el campo esté en `$encryptedFields`
 2. Implementar correctamente `getXxxAttribute()`
-3. Verificar que el trait `HandlesEncryptedFields` esté incluido
+3. Verificar que el trait esté incluido
 
 ### Problema: Filtrado no funciona en campos relacionados
 **Solución:** 
@@ -445,12 +575,88 @@ $config = DevExtremeConfig::make()
 1. Usar filtros más específicos
 2. Implementar paginación del lado del servidor
 3. Limitar los campos encriptados solo a los necesarios
+4. **⭐ Usar `AdvancedOptimizedEncryptedFields` para mejor manejo de memoria**
+
+### Problemas específicos del AdvancedOptimizedEncryptedFields
+
+### Problema: El caché no se actualiza después de cambiar datos
+**Solución:** El trait incluye auto-limpieza, pero si tienes problemas:
+```php
+// Limpiar caché manualmente
+$user = new User();
+$user->clearEncryptedFieldsCache();
+
+// O limpiar todo el caché
+Cache::flush();
+```
+
+### Problema: Búsquedas lentas en el primer acceso
+**Esto es normal:** El trait construye el hash mapping en el primer acceso. Las siguientes búsquedas serán ultra-rápidas.
+
+### Problema: Mucho uso de memoria con datasets gigantes
+**Solución:** Ajustar la configuración de chunks:
+```php
+// En config/cache.php o .env
+ENCRYPTED_FIELDS_CHUNK_SIZE=500  // Reducir el tamaño de chunk por defecto
+```
+
+### Problema: El hash mapping no funciona para búsquedas parciales
+**Esto es por diseño:** El hash mapping solo funciona para búsquedas exactas (`=` o `equals`). Las búsquedas con `contains` usan el método de caché estándar.
 
 ## 📊 Rendimiento
 
-- **Campos normales**: Ordenamiento y filtrado en base de datos (rápido)
-- **Campos encriptados**: Ordenamiento en aplicación (más lento)
-- **Recomendación**: Usar campos encriptados solo cuando sea necesario
+### Comparación de Traits
+
+| Aspecto | HandlesEncryptedFields | OptimizedEncryptedFields | AdvancedOptimizedEncryptedFields |
+|---------|----------------------|------------------------|--------------------------------|
+| **Búsqueda Exacta** | 🔴 Muy lento (descifra todo) | 🟡 Rápido (con caché) | 🟢 Ultra-rápido (hash mapping) |
+| **Búsqueda Contiene** | 🔴 Muy lento | 🟡 Rápido (con caché) | 🟢 Muy rápido (caché optimizado) |
+| **Multi-Modelo** | 🔴 Manual | 🟡 Limitado | 🟢 Automático y optimizado |
+| **Memoria** | 🔴 Problemas con datasets grandes | 🟡 Mejor con caché | 🟢 Chunks + caché inteligente |
+| **Primer acceso** | 🔴 Lento | 🔴 Lento | 🟡 Lento (construye hash) |
+| **Accesos siguientes** | 🔴 Siempre lento | 🟢 Rápido | 🟢 Ultra-rápido |
+
+### Rendimiento por Tipo de Operación
+
+- **Campos normales**: Ordenamiento y filtrado en base de datos (ultra-rápido)
+- **Campos encriptados (básico)**: Ordenamiento en aplicación (muy lento)
+- **Campos encriptados (optimizado)**: Ordenamiento en aplicación con caché (rápido)
+- **Campos encriptados (avanzado)**: Hash mapping + caché multinivel (ultra-rápido)
+
+### Recomendaciones de Uso
+
+#### Usar HandlesEncryptedFields cuando:
+- ✅ Aplicación pequeña (< 1,000 registros)
+- ✅ Pocas búsquedas en campos encriptados
+- ✅ Prototipo o desarrollo inicial
+
+#### Usar OptimizedEncryptedFields cuando:
+- ✅ Aplicación mediana (1,000 - 10,000 registros)
+- ✅ Búsquedas frecuentes pero no críticas
+- ✅ Recursos de caché limitados
+
+#### Usar AdvancedOptimizedEncryptedFields cuando: ⭐
+- ✅ Aplicación grande (> 10,000 registros)
+- ✅ Búsquedas críticas para la experiencia del usuario
+- ✅ Múltiples modelos con campos encriptados
+- ✅ Alto volumen de búsquedas exactas
+- ✅ Disponibilidad de Redis o caché robusto
+
+### Configuración de Caché Recomendada
+
+```php
+// Para aplicaciones pequeñas-medianas
+protected int $encryptedFieldsCacheDuration = 60;     // 1 hora
+protected int $hashMappingCacheDuration = 240;        // 4 horas
+
+// Para aplicaciones grandes con datos estables
+protected int $encryptedFieldsCacheDuration = 240;    // 4 horas
+protected int $hashMappingCacheDuration = 1440;       // 24 horas
+
+// Para aplicaciones con datos que cambian constantemente
+protected int $encryptedFieldsCacheDuration = 30;     // 30 minutos
+protected int $hashMappingCacheDuration = 120;        // 2 horas
+```
 
 ## 🔍 Logging y Debug
 
@@ -731,4 +937,22 @@ Este sistema permite manejar componentes DevExtreme con campos encriptados de ma
 4. **Transformar datos** antes de enviarlos al frontend
 5. **Obtener funcionalidad completa** de DevExtreme sin preocuparse por la encriptación
 
-El sistema maneja automáticamente la encriptación/desencriptación y optimiza el rendimiento usando ordenamiento en base de datos cuando es posible.
+### 🚀 Características del AdvancedOptimizedEncryptedFields
+
+El trait avanzado añade capacidades de nivel empresarial:
+
+- **Hash Mapping**: Búsquedas exactas instantáneas sin desencriptar
+- **Caché Inteligente**: Sistema multinivel con auto-limpieza
+- **Multi-Modelo**: Búsqueda simultánea en múltiples modelos relacionados
+- **Chunks Optimizados**: Manejo eficiente de datasets masivos
+- **Auto-gestión**: Limpieza automática del caché al cambiar datos
+
+### Elección del Trait Correcto
+
+| Tamaño de App | Registros | Trait Recomendado |
+|---------------|-----------|-------------------|
+| Pequeña | < 1K | HandlesEncryptedFields |
+| Mediana | 1K - 10K | OptimizedEncryptedFields |
+| Grande | > 10K | **AdvancedOptimizedEncryptedFields** ⭐ |
+
+El sistema maneja automáticamente la encriptación/desencriptación y optimiza el rendimiento usando ordenamiento en base de datos cuando es posible, y técnicas avanzadas de caché para campos encriptados.
