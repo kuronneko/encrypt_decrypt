@@ -89,25 +89,23 @@ $(document).ready(async function (e) {
         .dxDataGrid({
             dataSource: {
                 store: items,
-                // Enable server-side operations
                 paginate: true,
                 pageSize: 10,
             },
-            // Enable remote operations but disable grouping to prevent header filter requests
+
             remoteOperations: {
                 paging: true,
                 filtering: true,
                 sorting: true,
-                grouping: false, // Keep disabled to prevent header filter from making separate requests
+                grouping: false,
                 summary: false,
             },
             columnAutoWidth: true,
-            showBorders: true, // mostrar bordes de la tabla
-            hoverStateEnabled: true, // color en la fila al pasar el mouse por encima
-            columnHidingEnabled: true, // ocultar columnas si no alcanzan a desplegarse en la resolucion
-            allowColumnReordering: true, // permite mover las columnas (cambiar de orden) al actualizar vuelve a la normalidad
-            // rowAlternationEnabled: true, // fila de color intercalada
-            wordWrapEnabled: true, // permite visualizar todo el texto en una columna (pasa la siguiente, como si hiciera enter)
+            showBorders: true,
+            hoverStateEnabled: true,
+            columnHidingEnabled: true,
+            allowColumnReordering: true,
+            wordWrapEnabled: true,
             /*            searchPanel: {
                 // 1 panel para buscar palabras
                 visible: true,
@@ -115,18 +113,15 @@ $(document).ready(async function (e) {
                 placeholder: "Buscar...",
             }, */
             headerFilter: {
-                // Disable header filter to prevent extra requests
                 visible: false,
             },
             filterRow: {
-                //lupita para buscar en columna
                 visible: true,
-                applyFilter: "auto", // puede ser auto u onClick
+                applyFilter: "auto",
                 betweenStartText: "Inicio",
                 betweenEndText: "Fin",
             },
             pager: {
-                // paginador, cuantas filas se muestran
                 allowedPageSizes: [10, 25, 50, 100],
                 showInfo: true,
                 showNavigationButtons: true,
@@ -134,87 +129,14 @@ $(document).ready(async function (e) {
                 visible: "auto",
             },
             paging: {
-                // numero de filas a mostrar
                 pageSize: 10,
             },
 
             columnChooser: {
-                // escoger que columnas se muestran u ocultar al presionar un botón y seleccionar
                 enabled: false,
                 mode: "select",
             },
             columns: [
-                {
-                    type: "buttons",
-                    width: 100,
-                    cellTemplate: function (container, options) {
-                        let deleteUser = $("<i>")
-                            .addClass(
-                                "fa-solid fa-trash table-icon deleteIconUser"
-                            )
-                            .attr("title", "deleteIconUser")
-                            .on("click", function () {
-                                //dataGrid.deleteRow(options.rowIndex);
-                                Swal.fire({
-                                    title: "¿Deseas eliminar este usuario?",
-                                    icon: "question",
-                                    showCancelButton: true,
-                                    confirmButtonText: "Si",
-                                    cancelButtonText: "No",
-                                    showCloseButton: true,
-                                }).then((result) => {
-                                    if (result.isConfirmed) {
-                                        let key = options.row.data.id; // Assuming 'id' is the key of the record
-                                        $.ajax({
-                                            url: "/users/" + key + "/delete/",
-                                            type: "DELETE",
-                                            data: {
-                                                id: key,
-                                            },
-                                            success: function () {
-                                                showNotification(
-                                                    "success",
-                                                    "Usuario eliminado."
-                                                );
-                                                dataGrid.refresh();
-                                            },
-                                            error: function (
-                                                jqXHR,
-                                                textStatus,
-                                                errorThrown
-                                            ) {
-                                                let errorMessage =
-                                                    jqXHR.responseJSON.message;
-                                                showNotification(
-                                                    "error",
-                                                    errorMessage
-                                                );
-                                            },
-                                        });
-                                    }
-                                });
-                            });
-                        //if (document.getElementById('adm_clientes_bodegas.edit').value == "1") {
-                        // Edit Icon
-                        let editIconUser = $("<a>")
-                            .attr(
-                                "href",
-                                "/users/" + options.row.data.id + "/edit/"
-                            )
-                            .append(
-                                $("<i>")
-                                    .addClass(
-                                        "fa-solid fa-pen-to-square table-icon editIconUser"
-                                    )
-                                    .attr("title", "editIconUser")
-                                    .css("color", "#e54800")
-                            );
-                        //  }
-                        $(container)
-                            .append(editIconUser.addClass("icon-spacing"))
-                            .append(deleteUser.addClass("icon-spacing"));
-                    },
-                },
                 {
                     dataField: "id",
                     caption: "ID",
@@ -227,37 +149,37 @@ $(document).ready(async function (e) {
                         ">=",
                         "between",
                     ],
-                    hidingPriority: 1, // prioridad para ocultar columna, 0 se oculta primero
+                    hidingPriority: 1,
                     allowEditing: true,
-                    width: 70, // Set the width to a smaller size
+                    width: 70,
                     dataType: "number",
                 },
                 {
                     dataField: "name",
                     caption: "Nombre",
                     filterOperations: ["contains"],
-                    hidingPriority: 1, // prioridad para ocultar columna, 0 se oculta primero
+                    hidingPriority: 1,
                     allowEditing: true,
                 },
                 {
                     dataField: "email",
                     caption: "Email",
                     filterOperations: ["contains"],
-                    hidingPriority: 1, // prioridad para ocultar columna, 0 se oculta primero
+                    hidingPriority: 1,
                     allowEditing: true,
                 },
                 {
                     dataField: "city",
                     caption: "Ciudad",
                     filterOperations: ["contains"],
-                    hidingPriority: 1, // prioridad para ocultar columna, 0 se oculta primero
+                    hidingPriority: 1,
                     allowEditing: true,
                 },
                 {
                     dataField: "postal_code",
                     caption: "Código Postal",
                     filterOperations: ["contains"],
-                    hidingPriority: 2, // prioridad para ocultar columna, 0 se oculta primero
+                    hidingPriority: 2,
                     allowEditing: false,
                     cellTemplate: function (container, options) {
                         const postalCode = options.value || "N/A";
@@ -276,7 +198,7 @@ $(document).ready(async function (e) {
                         ">=",
                         "between",
                     ],
-                    hidingPriority: 6, // prioridad para ocultar columna, 0 se oculta primero
+                    hidingPriority: 6,
                     dataType: "datetime",
                     format: "dd/MM/yyyy HH:mm",
                 },
@@ -292,7 +214,7 @@ $(document).ready(async function (e) {
                         ">=",
                         "between",
                     ],
-                    hidingPriority: 6, // prioridad para ocultar columna, 0 se oculta primero
+                    hidingPriority: 6,
                     dataType: "datetime",
                     format: "dd/MM/yyyy HH:mm",
                 },
@@ -320,12 +242,10 @@ $(document).ready(async function (e) {
         })
         .dxDataGrid("instance");
 
-    // Global function to refresh the grid (can be called from modal)
     window.refreshUsersGrid = function() {
         $("#usersGrid").dxDataGrid("instance").refresh();
     };
 
-    // Refresh button functionality
     $("#refreshBtn").on("click", function() {
         refreshUsersGrid();
     });
