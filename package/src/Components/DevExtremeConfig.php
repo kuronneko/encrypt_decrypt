@@ -1,50 +1,66 @@
 <?php
 
-namespace Kuronneko\LaravelDevExtremeEncrypted\Components;
+namespace App\Components;
+
+use Illuminate\Database\Eloquent\Model;
 
 class DevExtremeConfig
 {
-    protected array $config = [];
+    protected array $config = [
+        'searchableFields' => [],
+        'encryptedFieldsHandler' => null,
+        'relatedModels' => [],
+        'defaultSort' => ['id' => 'desc'],
+        'dataTransformer' => null,
+    ];
 
     /**
-     * Create a new configuration instance
+     * Set searchable fields for global search
      */
-    public static function make(): self
+    public function searchableFields(array $fields): self
     {
-        return new static();
-    }
-
-    /**
-     * Set the encrypted fields handler
-     */
-    public function encryptedFieldsHandler($handler): self
-    {
-        $this->config['encryptedFieldsHandler'] = $handler;
+        $this->config['searchableFields'] = $fields;
         return $this;
     }
 
     /**
-     * Add a related model
+     * Set the main model for encrypted field handling
      */
-    public function relatedModel(string $relationName, $model): self
+    public function encryptedFieldsHandler(Model $model): self
+    {
+        $this->config['encryptedFieldsHandler'] = $model;
+        return $this;
+    }
+
+    /**
+     * Add a related model for handling encrypted fields
+     */
+    public function relatedModel(string $relationName, Model $model): self
     {
         $this->config['relatedModels'][$relationName] = $model;
         return $this;
     }
 
     /**
-     * Set searchable fields
+     * Set multiple related models at once
      */
-    public function searchableFields(array $fields): self
+    public function relatedModels(array $models): self
     {
-        // Filter out protected fields
-        $protectedFields = config('devextreme-encrypted.security.protected_fields', []);
-        $this->config['searchableFields'] = array_diff($fields, $protectedFields);
+        $this->config['relatedModels'] = array_merge($this->config['relatedModels'], $models);
         return $this;
     }
 
     /**
      * Set default sorting
+     */
+    public function defaultSort(array $sort): self
+    {
+        $this->config['defaultSort'] = $sort;
+        return $this;
+    }
+
+    /**
+     * Set default sorting by field and direction
      */
     public function sortBy(string $field, string $direction = 'asc'): self
     {
@@ -53,7 +69,7 @@ class DevExtremeConfig
     }
 
     /**
-     * Set data transformer function
+     * Set data transformer callback
      */
     public function transform(callable $transformer): self
     {
@@ -62,46 +78,59 @@ class DevExtremeConfig
     }
 
     /**
-     * Enable audit logging for this configuration
-     */
-    public function withAuditLogging(bool $enabled = true): self
-    {
-        $this->config['auditLogging'] = $enabled;
-        return $this;
-    }
-
-    /**
-     * Set custom cache duration for this configuration
-     */
-    public function cacheDuration(int $minutes): self
-    {
-        $this->config['cacheDuration'] = $minutes;
-        return $this;
-    }
-
-    /**
-     * Set optimization strategy
-     */
-    public function optimizationStrategy(string $strategy): self
-    {
-        $this->config['optimizationStrategy'] = $strategy;
-        return $this;
-    }
-
-    /**
      * Build and return the configuration array
      */
     public function build(): array
     {
-        return array_merge([
-            'searchableFields' => [],
-            'encryptedFieldsHandler' => null,
-            'relatedModels' => [],
-            'defaultSort' => ['id' => 'desc'],
-            'dataTransformer' => null,
-            'auditLogging' => config('devextreme-encrypted.security.audit_logging', false),
-            'cacheDuration' => config('devextreme-encrypted.cache.duration', 5),
-            'optimizationStrategy' => 'auto',
-        ], $this->config);
+        return $this->config;
+    }
+
+    /**
+     * Static factory method
+     */
+    public static function make(): self
+    {
+        return new static();
+    }
+
+    /**
+     * Quick setup for User-Location relationship (common use case)
+     */
+/*     public static function userLocationSetup(): self
+    {
+        return static::make()
+            ->encryptedFieldsHandler(new \App\Models\User())
+            ->relatedModel('locations', new \App\Models\Location())
+            ->searchableFields([
+                'id', 'name', 'email', 'city',
+                'locations.postal_code', 'locations.address'
+            ])
+            ->sortBy('id', 'desc');
+    } */
+
+    /**
+     * Quick setup for Location-User relationship (reverse relationship)
+     */
+/*     public static function locationUserSetup(): self
+    {
+        return static::make()
+            ->encryptedFieldsHandler(new \App\Models\Location())
+            ->relatedModel('user', new \App\Models\User())
+            ->searchableFields([
+                'id', 'name', 'city', 'state', 'country',
+                'address', 'postal_code', 'user.name', 'user.email'
+            ])
+            ->sortBy('id', 'desc');
+    } */
+
+    /**
+     * Simple setup for single model without relationships
+     */
+    public static function simpleSetup(string $modelClass, array $searchableFields = []): self
+    {
+        return static::make()
+            ->encryptedFieldsHandler(new $modelClass())
+            ->searchableFields($searchableFields)
+            ->sortBy('id', 'desc');
     }
 }

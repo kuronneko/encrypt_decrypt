@@ -1,9 +1,8 @@
 <?php
 
-namespace Kuronneko\LaravelDevExtremeEncrypted\Traits;
+namespace App\Traits;
 
 use Illuminate\Support\Facades\Crypt;
-use Illuminate\Support\Facades\Cache;
 
 trait HandlesEncryptedFields
 {
@@ -25,21 +24,47 @@ trait HandlesEncryptedFields
     }
 
     /**
-     * Apply filter to encrypted fields with caching
+     * Apply filter to encrypted fields
      */
     public function applyEncryptedFieldFilter($query, string $field, string $operator, $value)
     {
-        $cacheEnabled = config('devextreme-encrypted.cache.enabled', true);
-        $cacheDuration = config('devextreme-encrypted.cache.duration', 5);
+        // Get all records and filter in PHP (necessary for encrypted fields)
+        // This is not ideal for performance but necessary for encrypted fields
+        $modelClass = get_class($this->newModelInstance());
+        $allRecords = $modelClass::all();
+        $matchingIds = [];
 
-        if ($cacheEnabled) {
-            $cacheKey = $this->getEncryptedFieldCacheKey($field, $operator, $value);
+        foreach ($allRecords as $record) {
+            $decryptedValue = $record->{$field}; // This will auto-decrypt via accessor
 
-            $matchingIds = Cache::remember($cacheKey, $cacheDuration * 60, function() use ($field, $operator, $value) {
-                return $this->findMatchingEncryptedRecords($field, $operator, $value);
-            });
-        } else {
-            $matchingIds = $this->findMatchingEncryptedRecords($field, $operator, $value);
+            $matches = false;
+            switch ($operator) {
+                case 'contains':
+                    $matches = stripos($decryptedValue, $value) !== false;
+                    break;
+                case '=':
+                    $matches = strcasecmp($decryptedValue, $value) === 0;
+                    break;
+                case '<>':
+                    $matches = strcasecmp($decryptedValue, $value) !== 0;
+                    break;
+                case '>':
+                    $matches = strcmp($decryptedValue, $value) > 0;
+                    break;
+                case '<':
+                    $matches = strcmp($decryptedValue, $value) < 0;
+                    break;
+                case '>=':
+                    $matches = strcmp($decryptedValue, $value) >= 0;
+                    break;
+                case '<=':
+                    $matches = strcmp($decryptedValue, $value) <= 0;
+                    break;
+            }
+
+            if ($matches) {
+                $matchingIds[] = $record->id;
+            }
         }
 
         if (!empty($matchingIds)) {
@@ -53,57 +78,16 @@ trait HandlesEncryptedFields
     }
 
     /**
-     * Apply global search to encrypted fields with caching
+     * Apply global search to encrypted fields
      */
     public function applyEncryptedFieldsGlobalSearch($query, string $searchText, array $encryptedFields = null)
     {
         $encryptedFields = $encryptedFields ?? $this->getEncryptedFields();
 
         if (empty($encryptedFields)) {
-            return [];
+            return $query;
         }
 
-        $cacheEnabled = config('devextreme-encrypted.cache.enabled', true);
-        $cacheDuration = config('devextreme-encrypted.cache.duration', 5);
-
-        if ($cacheEnabled) {
-            $cacheKey = $this->getGlobalSearchCacheKey($searchText, $encryptedFields);
-
-            $matchingIds = Cache::remember($cacheKey, $cacheDuration * 60, function() use ($searchText, $encryptedFields) {
-                return $this->findMatchingEncryptedRecordsGlobal($searchText, $encryptedFields);
-            });
-        } else {
-            $matchingIds = $this->findMatchingEncryptedRecordsGlobal($searchText, $encryptedFields);
-        }
-
-        return $matchingIds;
-    }
-
-    /**
-     * Find matching records for a specific encrypted field
-     */
-    private function findMatchingEncryptedRecords(string $field, string $operator, $value): array
-    {
-        $modelClass = get_class($this->newModelInstance());
-        $allRecords = $modelClass::all();
-        $matchingIds = [];
-
-        foreach ($allRecords as $record) {
-            $decryptedValue = $record->{$field}; // This will auto-decrypt via accessor
-
-            if ($this->checkFieldMatch($decryptedValue, $operator, $value)) {
-                $matchingIds[] = $record->id;
-            }
-        }
-
-        return $matchingIds;
-    }
-
-    /**
-     * Find matching records for global search across multiple encrypted fields
-     */
-    private function findMatchingEncryptedRecordsGlobal(string $searchText, array $encryptedFields): array
-    {
         $modelClass = get_class($this->newModelInstance());
         $allRecords = $modelClass::all();
         $matchingIds = [];
@@ -122,71 +106,11 @@ trait HandlesEncryptedFields
     }
 
     /**
-     * Check if a decrypted value matches the filter criteria
+     * Get a new model instance for the current class
      */
-    private function checkFieldMatch($decryptedValue, string $operator, $value): bool
+    public function newModelInstance()
     {
-        switch ($operator) {
-            case 'contains':
-                return stripos($decryptedValue, $value) !== false;
-            case '=':
-                return strcasecmp($decryptedValue, $value) === 0;
-            case '<>':
-                return strcasecmp($decryptedValue, $value) !== 0;
-            case '>':
-                return strcmp($decryptedValue, $value) > 0;
-            case '<':
-                return strcmp($decryptedValue, $value) < 0;
-            case '>=':
-                return strcmp($decryptedValue, $value) >= 0;
-            case '<=':
-                return strcmp($decryptedValue, $value) <= 0;
-            default:
-                return false;
-        }
-    }
-
-    /**
-     * Generate cache key for encrypted field search
-     */
-    private function getEncryptedFieldCacheKey(string $field, string $operator, $value): string
-    {
-        $modelClass = get_class($this->newModelInstance());
-        return sprintf(
-            'devextreme_encrypted_%s_%s_%s_%s',
-            str_replace('\\', '_', $modelClass),
-            $field,
-            $operator,
-            md5(serialize($value))
-        );
-    }
-
-    /**
-     * Generate cache key for global encrypted search
-     */
-    private function getGlobalSearchCacheKey(string $searchText, array $encryptedFields): string
-    {
-        $modelClass = get_class($this->newModelInstance());
-        return sprintf(
-            'devextreme_global_%s_%s_%s',
-            str_replace('\\', '_', $modelClass),
-            md5($searchText),
-            md5(serialize($encryptedFields))
-        );
-    }
-
-    /**
-     * Clear encrypted fields cache for this model
-     */
-    public function clearEncryptedFieldsCache(): void
-    {
-        $modelClass = get_class($this->newModelInstance());
-        $pattern = sprintf('devextreme_*_%s_*', str_replace('\\', '_', $modelClass));
-
-        // Note: This is a simplified cache clearing mechanism
-        // In production, you might want to use cache tags or a more sophisticated approach
-        if (config('devextreme-encrypted.cache.enabled')) {
-            Cache::flush(); // This clears all cache - consider using cache tags for better performance
-        }
+        // This should be overridden in the model to return the appropriate model instance
+        throw new \Exception('newModelInstance method must be implemented in the model');
     }
 }

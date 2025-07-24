@@ -1,6 +1,6 @@
 <?php
 
-namespace Kuronneko\LaravelDevExtremeEncrypted\Components;
+namespace App\Components;
 
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Log;
@@ -29,9 +29,7 @@ class DevExtremeFilter
             return $this->query;
         }
 
-        if (config('devextreme-encrypted.performance.debug_logging')) {
-            Log::info("DevExtremeFilter: Applying filters", ['filters' => $filters]);
-        }
+        Log::info("DevExtremeFilter: Applying filters", ['filters' => $filters]);
 
         // Handle simple filter array [field, operator, value]
         if (count($filters) === 3 && !is_array($filters[0])) {
@@ -55,48 +53,6 @@ class DevExtremeFilter
     }
 
     /**
-     * Apply global search across searchable fields
-     */
-    public function applyGlobalSearch(string $searchText, array $searchableFields = []): Builder
-    {
-        if (empty($searchText) || empty($searchableFields)) {
-            return $this->query;
-        }
-
-        if (config('devextreme-encrypted.performance.debug_logging')) {
-            Log::info("DevExtremeFilter: Applying global search", [
-                'searchText' => $searchText,
-                'fields' => $searchableFields
-            ]);
-        }
-
-        $this->query->where(function($q) use ($searchText, $searchableFields) {
-            foreach ($searchableFields as $field) {
-                // Check for protected fields
-                if (in_array($field, config('devextreme-encrypted.security.protected_fields', []))) {
-                    continue;
-                }
-
-                // Handle related model fields with dot notation
-                if (strpos($field, '.') !== false) {
-                    $this->applyRelatedFieldSearch($q, $field, $searchText);
-                } elseif ($this->encryptedFieldsHandler && $this->encryptedFieldsHandler->isEncryptedField($field)) {
-                    // Handle encrypted field in main model
-                    $matchingIds = $this->encryptedFieldsHandler->applyEncryptedFieldsGlobalSearch($q, $searchText, [$field]);
-                    if (!empty($matchingIds)) {
-                        $q->orWhereIn('id', $matchingIds);
-                    }
-                } else {
-                    // Handle regular field in main model
-                    $q->orWhere($field, 'like', '%' . $searchText . '%');
-                }
-            }
-        });
-
-        return $this->query;
-    }
-
-    /**
      * Apply a single filter condition
      */
     protected function applySingleFilter(array $filter): Builder
@@ -109,116 +65,120 @@ class DevExtremeFilter
         $operator = $filter[1];
         $value = $filter[2];
 
-        // Check for protected fields
-        if (in_array($field, config('devextreme-encrypted.security.protected_fields', []))) {
+        Log::info("DevExtremeFilter: Processing single filter", [
+            'field' => $field,
+            'operator' => $operator,
+            'value' => $value
+        ]);
+
+        // Check if we have searchable fields restriction and enforce it
+        if (!empty($this->searchableFields) && !$this->isFieldSearchable($field)) {
+            Log::info("DevExtremeFilter: Field not searchable, skipping", ['field' => $field]);
             return $this->query;
         }
 
-        if (config('devextreme-encrypted.performance.debug_logging')) {
-            Log::info("DevExtremeFilter: Processing single filter", [
-                'field' => $field,
-                'operator' => $operator,
-                'value' => $value
-            ]);
-        }
-
-        // Handle related model fields with dot notation
+        // Handle related model fields with dot notation (e.g., locations.postal_code)
         if (strpos($field, '.') !== false) {
+            Log::info("DevExtremeFilter: Field has dot notation", ['field' => $field]);
             return $this->applyRelatedModelFilter($field, $operator, $value);
         }
 
-        // Handle encrypted fields in main model
-        if ($this->encryptedFieldsHandler && $this->encryptedFieldsHandler->isEncryptedField($field)) {
-            return $this->encryptedFieldsHandler->applyEncryptedFieldFilter($this->query, $field, $operator, $value);
-        }
+        // PRIORITY 1: Check if field exists in main table first (to prevent conflicts)
+        if ($this->isFieldInMainTable($field)) {
+            Log::info("DevExtremeFilter: Field found in main table", ['field' => $field]);
 
-        // Handle date fields
-        if ($this->isDateField($field)) {
-            return $this->applyDateFilter($field, $operator, $value);
-        }
-
-        // Handle regular fields
-        return $this->applyRegularFilter($field, $operator, $value);
-    }
-
-    /**
-     * Apply search for related field
-     */
-    protected function applyRelatedFieldSearch($q, string $field, string $searchText): void
-    {
-        [$relationName, $relationField] = explode('.', $field, 2);
-
-        if (isset($this->relatedModels[$relationName])) {
-            $relatedModel = $this->relatedModels[$relationName];
-
-            if ($this->encryptedFieldsHandler && $relatedModel->isEncryptedField($relationField)) {
-                // Handle encrypted related field
-                $this->handleEncryptedRelatedSearch($q, $relationName, $relationField, $searchText, $relatedModel);
-            } else {
-                // Handle regular related field
-                $q->orWhereHas($relationName, function($subQ) use ($relationField, $searchText) {
-                    $subQ->where($relationField, 'like', '%' . $searchText . '%');
-                });
+            // Handle encrypted fields in main model
+            if ($this->encryptedFieldsHandler && $this->encryptedFieldsHandler->isEncryptedField($field)) {
+                Log::info("DevExtremeFilter: Field is encrypted in main model", ['field' => $field]);
+                return $this->encryptedFieldsHandler->applyEncryptedFieldFilter($this->query, $field, $operator, $value);
             }
+
+            // Handle date fields
+            if ($this->isDateField($field)) {
+                Log::info("DevExtremeFilter: Field is date field", ['field' => $field]);
+                return $this->applyDateFilter($field, $operator, $value);
+            }
+
+            // Handle regular fields in main table
+            Log::info("DevExtremeFilter: Field is regular field in main table", ['field' => $field]);
+            return $this->applyRegularFilter($field, $operator, $value);
         }
-    }
 
-    /**
-     * Handle encrypted related field search
-     */
-    protected function handleEncryptedRelatedSearch($q, $relationName, $relationField, $searchText, $relatedModel): void
-    {
-        // For encrypted fields, we need to get all related records and filter in PHP
-        $relatedModelInstance = get_class($relatedModel);
-        $allRelatedRecords = $relatedModelInstance::all();
-        $matchingIds = [];
-
-        foreach ($allRelatedRecords as $record) {
-            $decryptedValue = $record->{$relationField}; // Auto-decrypt
-
-            if (stripos($decryptedValue, $searchText) !== false) {
-                $matchingIds[] = $record->id;
+        // PRIORITY 2: Only check related models if field doesn't exist in main table
+        foreach ($this->relatedModels as $relationName => $relatedModel) {
+            if ($this->isFieldInRelatedModel($relatedModel, $field)) {
+                Log::info("DevExtremeFilter: Found field in related model (fallback)", [
+                    'field' => $field,
+                    'relationName' => $relationName
+                ]);
+                return $this->applyRelatedModelFilter($relationName . '.' . $field, $operator, $value);
             }
         }
 
-        // Filter main query based on matching related record IDs
-        if (!empty($matchingIds)) {
-            $q->orWhereHas($relationName, function($subQ) use ($matchingIds) {
-                $subQ->whereIn('id', $matchingIds);
-            });
-        }
-    }
-
-    /**
-     * Apply filter for related model field
-     */
-    protected function applyRelatedModelFilter(string $field, string $operator, $value): Builder
-    {
-        [$relationName, $relationField] = explode('.', $field, 2);
-
-        if (isset($this->relatedModels[$relationName])) {
-            $relatedModel = $this->relatedModels[$relationName];
-
-            if ($relatedModel && method_exists($relatedModel, 'isEncryptedField') && $relatedModel->isEncryptedField($relationField)) {
-                // Handle encrypted related field
-                return $this->applyEncryptedRelatedFilter($relationName, $relationField, $operator, $value, $relatedModel);
-            } else {
-                // Handle regular related field
-                return $this->query->whereHas($relationName, function($q) use ($relationField, $operator, $value) {
-                    $this->applyRegularFilter($relationField, $operator, $value, $q);
-                });
-            }
-        }
-
+        // If field is not found anywhere, log and skip
+        Log::warning("DevExtremeFilter: Field not found in any table", ['field' => $field]);
         return $this->query;
     }
 
     /**
-     * Apply filter for encrypted related field
+     * Apply filter to related model fields using whereHas (no JOIN)
      */
-    protected function applyEncryptedRelatedFilter($relationName, $field, $operator, $value, $relatedModel): Builder
+    protected function applyRelatedModelFilter(string $field, string $operator, $value): Builder
     {
-        // Get all related records and filter in PHP
+        // Parse the relationship and field (e.g., locations.postal_code)
+        $parts = explode('.', $field, 2);
+        if (count($parts) !== 2) {
+            return $this->query;
+        }
+
+        $relationName = $parts[0];
+        $relationField = $parts[1];
+
+        Log::info("DevExtremeFilter: Applying related model filter", [
+            'relation' => $relationName,
+            'field' => $relationField,
+            'operator' => $operator,
+            'value' => $value
+        ]);
+
+        // Check if we have a handler for this related model
+        $relatedModel = $this->relatedModels[$relationName] ?? null;
+
+        if ($relatedModel && $relatedModel->isEncryptedField($relationField)) {
+            // Handle encrypted fields in related models
+            return $this->applyEncryptedRelatedModelFilter($relationName, $relationField, $operator, $value, $relatedModel);
+        }
+
+        // Handle regular related model fields using whereHas (safer than JOIN)
+        return $this->applyRegularRelatedModelFilter($relationName, $relationField, $operator, $value);
+    }
+
+    /**
+     * Apply filter to encrypted fields in related models using optimized caching
+     */
+    protected function applyEncryptedRelatedModelFilter(string $relationName, string $field, string $operator, $value, $relatedModel): Builder
+    {
+        Log::info("DevExtremeFilter: Applying encrypted related field filter with caching", [
+            'relation' => $relationName,
+            'field' => $field,
+            'operator' => $operator
+        ]);
+
+        // Use the optimized cached method from AdvancedOptimizedEncryptedFields trait
+        if ($this->encryptedFieldsHandler && method_exists($this->encryptedFieldsHandler, 'applyEncryptedRelatedModelFilter')) {
+            return $this->encryptedFieldsHandler->applyEncryptedRelatedModelFilter(
+                $this->query,
+                $relationName,
+                $field,
+                $operator,
+                $value,
+                $relatedModel
+            );
+        }
+
+        // Fallback to the old method if the optimized one isn't available
+        Log::warning("DevExtremeFilter: Falling back to non-cached method for encrypted related field");
+
         $relatedModelInstance = get_class($relatedModel);
         $allRelatedRecords = $relatedModelInstance::all();
         $matchingIds = [];
@@ -245,91 +205,280 @@ class DevExtremeFilter
     }
 
     /**
-     * Apply date filter
+     * Apply filter to regular fields in related models using whereHas
      */
-    protected function applyDateFilter(string $field, string $operator, $value, Builder $query = null): Builder
+    protected function applyRegularRelatedModelFilter(string $relationName, string $field, string $operator, $value): Builder
     {
-        $query = $query ?: $this->query;
+        $this->query->whereHas($relationName, function($q) use ($field, $operator, $value) {
+            switch ($operator) {
+                case 'contains':
+                    $q->where($field, 'like', '%' . $value . '%');
+                    break;
+                case '=':
+                    $q->where($field, $value);
+                    break;
+                case '<>':
+                    $q->where($field, '!=', $value);
+                    break;
+                case '>':
+                    $q->where($field, '>', $value);
+                    break;
+                case '<':
+                    $q->where($field, '<', $value);
+                    break;
+                case '>=':
+                    $q->where($field, '>=', $value);
+                    break;
+                case '<=':
+                    $q->where($field, '<=', $value);
+                    break;
+                case 'between':
+                    if (is_array($value) && count($value) >= 2) {
+                        $q->whereBetween($field, [$value[0], $value[1]]);
+                    }
+                    break;
+            }
+        });
 
-        // Convert value to proper date format if needed
+        return $this->query;
+    }
+
+    /**
+     * Apply filter to date fields
+     */
+    protected function applyDateFilter(string $field, string $operator, $value): Builder
+    {
+        // Convert the value to a proper date format if needed
         if (is_string($value)) {
             try {
-                $value = \Carbon\Carbon::parse($value);
+                $value = \Carbon\Carbon::parse($value)->format('Y-m-d H:i:s');
             } catch (\Exception $e) {
-                // If parsing fails, treat as regular filter
-                return $this->applyRegularFilter($field, $operator, $value, $query);
+                // If parsing fails, use the original value
             }
         }
 
         switch ($operator) {
             case '=':
-                $query->whereDate($field, $value);
+                if (is_string($value) && strlen($value) <= 10) {
+                    $this->query->whereDate($field, $value);
+                } else {
+                    $this->query->where($field, $value);
+                }
                 break;
             case '<>':
-                $query->whereDate($field, '!=', $value);
+                $this->query->where($field, '!=', $value);
                 break;
             case '>':
-                $query->whereDate($field, '>', $value);
+                $this->query->where($field, '>', $value);
                 break;
             case '<':
-                $query->whereDate($field, '<', $value);
+                $this->query->where($field, '<', $value);
                 break;
             case '>=':
-                $query->whereDate($field, '>=', $value);
+                $this->query->where($field, '>=', $value);
                 break;
             case '<=':
-                $query->whereDate($field, '<=', $value);
+                $this->query->where($field, '<=', $value);
                 break;
-            default:
-                $query->whereDate($field, $value);
+            case 'between':
+                if (is_array($value) && count($value) >= 2) {
+                    $this->query->whereBetween($field, [$value[0], $value[1]]);
+                }
+                break;
         }
 
-        return $query;
+        return $this->query;
     }
 
     /**
-     * Apply regular filter
+     * Apply filter to regular fields
      */
-    protected function applyRegularFilter(string $field, string $operator, $value, Builder $query = null): Builder
+    protected function applyRegularFilter(string $field, string $operator, $value): Builder
     {
-        $query = $query ?: $this->query;
-
         switch ($operator) {
             case 'contains':
-                $query->where($field, 'like', '%' . $value . '%');
-                break;
-            case 'notcontains':
-                $query->where($field, 'not like', '%' . $value . '%');
-                break;
-            case 'startswith':
-                $query->where($field, 'like', $value . '%');
-                break;
-            case 'endswith':
-                $query->where($field, 'like', '%' . $value);
+                $this->query->where($field, 'like', '%' . $value . '%');
                 break;
             case '=':
-                $query->where($field, $value);
+                $this->query->where($field, $value);
                 break;
             case '<>':
-                $query->where($field, '!=', $value);
+                $this->query->where($field, '!=', $value);
                 break;
             case '>':
-                $query->where($field, '>', $value);
+                $this->query->where($field, '>', $value);
                 break;
             case '<':
-                $query->where($field, '<', $value);
+                $this->query->where($field, '<', $value);
                 break;
             case '>=':
-                $query->where($field, '>=', $value);
+                $this->query->where($field, '>=', $value);
                 break;
             case '<=':
-                $query->where($field, '<=', $value);
+                $this->query->where($field, '<=', $value);
                 break;
-            default:
-                $query->where($field, $value);
+            case 'between':
+                if (is_array($value) && count($value) >= 2) {
+                    $this->query->whereBetween($field, [$value[0], $value[1]]);
+                }
+                break;
         }
 
-        return $query;
+        return $this->query;
+    }
+
+    /**
+     * Apply global search
+     */
+    public function applyGlobalSearch(string $searchText, array $searchableFields = []): Builder
+    {
+        if (empty($searchText) || empty($searchableFields)) {
+            return $this->query;
+        }
+
+        Log::info("DevExtremeFilter: Applying global search", [
+            'searchText' => $searchText,
+            'searchableFields' => $searchableFields
+        ]);
+
+        $this->query->where(function($q) use ($searchText, $searchableFields) {
+            foreach ($searchableFields as $field) {
+                if (strpos($field, '.') !== false) {
+                    // Related model field
+                    $parts = explode('.', $field, 2);
+                    if (count($parts) === 2) {
+                        $relationName = $parts[0];
+                        $relationField = $parts[1];
+
+                        $relatedModel = $this->relatedModels[$relationName] ?? null;
+
+                        if ($relatedModel && $relatedModel->isEncryptedField($relationField)) {
+                            // Handle encrypted related field search
+                            $this->handleEncryptedRelatedSearch($q, $relationName, $relationField, $searchText, $relatedModel);
+                        } else {
+                            // Handle regular related field search
+                            $q->orWhereHas($relationName, function($subQ) use ($relationField, $searchText) {
+                                $subQ->where($relationField, 'like', '%' . $searchText . '%');
+                            });
+                        }
+                    }
+                } elseif ($this->encryptedFieldsHandler && $this->encryptedFieldsHandler->isEncryptedField($field)) {
+                    // Handle encrypted field in main model
+                    $matchingIds = $this->encryptedFieldsHandler->applyEncryptedFieldsGlobalSearch($q, $searchText, [$field]);
+                    if (!empty($matchingIds)) {
+                        $q->orWhereIn('id', $matchingIds);
+                    }
+                } else {
+                    // Handle regular field in main model
+                    $q->orWhere($field, 'like', '%' . $searchText . '%');
+                }
+            }
+        });
+
+        return $this->query;
+    }
+
+    /**
+     * Handle encrypted related field search
+     */
+    protected function handleEncryptedRelatedSearch($q, $relationName, $relationField, $searchText, $relatedModel): void
+    {
+        $relatedModelInstance = get_class($relatedModel);
+        $allRelatedRecords = $relatedModelInstance::all();
+        $matchingIds = [];
+
+        foreach ($allRelatedRecords as $record) {
+            $decryptedValue = $record->{$relationField};
+            if (stripos((string)$decryptedValue, (string)$searchText) !== false) {
+                $matchingIds[] = $record->id;
+            }
+        }
+
+        if (!empty($matchingIds)) {
+            $q->orWhereHas($relationName, function($subQ) use ($matchingIds) {
+                $subQ->whereIn('id', $matchingIds);
+            });
+        }
+    }
+
+    /**
+     * Check if a value matches the given operator
+     */
+    protected function matchesOperator($fieldValue, string $operator, $searchValue): bool
+    {
+        switch ($operator) {
+            case 'contains':
+                return stripos((string)$fieldValue, (string)$searchValue) !== false;
+            case '=':
+                return $fieldValue == $searchValue;
+            case '<>':
+                return $fieldValue != $searchValue;
+            case '>':
+                return $fieldValue > $searchValue;
+            case '<':
+                return $fieldValue < $searchValue;
+            case '>=':
+                return $fieldValue >= $searchValue;
+            case '<=':
+                return $fieldValue <= $searchValue;
+            default:
+                return false;
+        }
+    }
+
+    /**
+     * Check if a field exists in the main table
+     */
+    protected function isFieldInMainTable(string $field): bool
+    {
+        if (!$this->encryptedFieldsHandler) {
+            return false;
+        }
+
+        // Check if it's in the fillable fields of the main model
+        $fillable = $this->encryptedFieldsHandler->getFillable();
+        if (!empty($fillable) && in_array($field, $fillable)) {
+            return true;
+        }
+
+        // Check the actual table columns
+        try {
+            $tableName = $this->encryptedFieldsHandler->getTable();
+            $columns = \Illuminate\Support\Facades\Schema::getColumnListing($tableName);
+            return in_array($field, $columns);
+        } catch (\Exception $e) {
+            Log::error("DevExtremeFilter: Error checking main table columns", [
+                'field' => $field,
+                'error' => $e->getMessage()
+            ]);
+            return false;
+        }
+    }
+
+    /**
+     * Check if a field exists in a related model
+     */
+    protected function isFieldInRelatedModel($relatedModel, string $field): bool
+    {
+        if (!$relatedModel) {
+            return false;
+        }
+
+        $fillable = $relatedModel->getFillable();
+
+        // Check fillable first
+        if (!empty($fillable) && in_array($field, $fillable)) {
+            return true;
+        }
+
+        // Check table columns
+        try {
+            $tableName = $relatedModel->getTable();
+            $columns = \Illuminate\Support\Facades\Schema::getColumnListing($tableName);
+            return in_array($field, $columns);
+        } catch (\Exception $e) {
+            return false;
+        }
     }
 
     /**
@@ -337,43 +486,34 @@ class DevExtremeFilter
      */
     protected function isDateField(string $field): bool
     {
-        if (!config('devextreme-encrypted.field_detection.auto_detect_dates', true)) {
-            return false;
+        $dateFields = ['created_at', 'updated_at', 'deleted_at', 'email_verified_at'];
+        return in_array($field, $dateFields);
+    }
+
+    /**
+     * Check if a field is in the searchable fields list
+     */
+    protected function isFieldSearchable(string $field): bool
+    {
+        if (empty($this->searchableFields)) {
+            return true;
         }
 
-        $patterns = config('devextreme-encrypted.field_detection.date_field_patterns', ['*_at', '*_date', 'date_*']);
+        // Direct match
+        if (in_array($field, $this->searchableFields)) {
+            return true;
+        }
 
-        foreach ($patterns as $pattern) {
-            if (fnmatch($pattern, $field)) {
-                return true;
+        // Check if field is part of a related field
+        foreach ($this->searchableFields as $searchableField) {
+            if (strpos($searchableField, '.') !== false) {
+                $parts = explode('.', $searchableField, 2);
+                if (count($parts) === 2 && $parts[1] === $field) {
+                    return true;
+                }
             }
         }
 
         return false;
-    }
-
-    /**
-     * Check if a decrypted value matches the given operator and value
-     */
-    protected function matchesOperator($decryptedValue, string $operator, $value): bool
-    {
-        switch ($operator) {
-            case 'contains':
-                return stripos($decryptedValue, $value) !== false;
-            case '=':
-                return strcasecmp($decryptedValue, $value) === 0;
-            case '<>':
-                return strcasecmp($decryptedValue, $value) !== 0;
-            case '>':
-                return strcmp($decryptedValue, $value) > 0;
-            case '<':
-                return strcmp($decryptedValue, $value) < 0;
-            case '>=':
-                return strcmp($decryptedValue, $value) >= 0;
-            case '<=':
-                return strcmp($decryptedValue, $value) <= 0;
-            default:
-                return false;
-        }
     }
 }

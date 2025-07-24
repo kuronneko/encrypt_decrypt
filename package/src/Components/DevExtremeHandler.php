@@ -1,11 +1,12 @@
 <?php
 
-namespace Kuronneko\LaravelDevExtremeEncrypted\Components;
+namespace App\Components;
 
 use Illuminate\Http\Request;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
 
 class DevExtremeHandler
 {
@@ -34,16 +35,10 @@ class DevExtremeHandler
     {
         // Get parameters from DevExtreme
         $skip = $request->get('skip', 0);
-        $take = $request->get('take', config('devextreme-encrypted.pagination.default_page_size', 20));
+        $take = $request->get('take', 10);
         $searchText = $request->get('searchValue', '');
         $filter = $request->get('filter', []);
         $sort = $request->get('sort', []);
-
-        // Enforce max page size
-        $maxPageSize = config('devextreme-encrypted.pagination.max_page_size', 1000);
-        if ($take > $maxPageSize) {
-            $take = $maxPageSize;
-        }
 
         // Parse filter and sort if they are JSON strings
         if (is_string($filter)) {
@@ -53,16 +48,14 @@ class DevExtremeHandler
             $sort = json_decode($sort, true);
         }
 
-        // Debug logging
-        if (config('devextreme-encrypted.performance.debug_logging')) {
-            Log::info("DevExtremeHandler: Processing request", [
-                'skip' => $skip,
-                'take' => $take,
-                'searchText' => $searchText,
-                'filter' => $filter,
-                'sort' => $sort
-            ]);
-        }
+        // Log what we're processing
+        Log::info("DevExtremeHandler: Processing request", [
+            'skip' => $skip,
+            'take' => $take,
+            'searchText' => $searchText,
+            'filter' => $filter,
+            'sort' => $sort
+        ]);
 
         // Apply global search if provided
         if (!empty($searchText) && !empty($this->config['searchableFields'])) {
@@ -74,134 +67,226 @@ class DevExtremeHandler
             $this->filterComponent->applyFilters($filter);
         }
 
-        // Determine optimization strategy
-        $strategy = $this->determineOptimizationStrategy($sort, $filter, $searchText);
+        // Check if we need post-processing (for any related fields or encrypted fields)
+        $needsPostProcessing = $this->needsPostProcessing($sort, $filter);
 
-        switch ($strategy) {
-            case 'sql_only':
-                return $this->handleSqlOnlyStrategy($skip, $take, $sort);
-            case 'hybrid':
-                return $this->handleHybridStrategy($skip, $take, $sort);
-            case 'post_process':
-            default:
-                return $this->handlePostProcessStrategy($skip, $take, $sort);
-        }
-    }
+        if ($needsPostProcessing) {
+            Log::info("DevExtremeHandler: Using post-processing approach");
 
-    /**
-     * Determine the optimal pagination strategy
-     */
-    protected function determineOptimizationStrategy(array $sort, array $filter, string $searchText): string
-    {
-        if (!config('devextreme-encrypted.performance.auto_optimize', true)) {
-            return 'post_process'; // Use original strategy if auto-optimize is disabled
-        }
+            // Get all data without sorting, then process in memory
+            $results = $this->query->get();
 
-        $hasEncryptedFieldOperation = $this->hasEncryptedFieldOperations($sort, $filter, $searchText);
-        $hasRelatedFieldOperation = $this->hasRelatedFieldOperations($sort, $filter);
+            // Transform data first
+            if ($this->config['dataTransformer'] && is_callable($this->config['dataTransformer'])) {
+                $results = $results->map($this->config['dataTransformer']);
+            }
 
-        if (!$hasEncryptedFieldOperation && !$hasRelatedFieldOperation) {
-            return 'sql_only';
-        }
+            // Apply sorting after transformation
+            if (!empty($sort)) {
+                $results = $this->applyPostSorting($results, $sort);
+            }
 
-        if (!$hasEncryptedFieldOperation && $hasRelatedFieldOperation) {
-            return 'hybrid';
-        }
+            // Get total count
+            $totalCount = $results->count();
 
-        return 'post_process';
-    }
+            // Apply pagination manually
+            $results = $results->slice($skip, $take)->values();
 
-    /**
-     * Handle requests that can be processed entirely with SQL
-     */
-    protected function handleSqlOnlyStrategy(int $skip, int $take, array $sort): JsonResponse
-    {
-        if (config('devextreme-encrypted.performance.debug_logging')) {
-            Log::info("DevExtremeHandler: Using SQL-only strategy");
-        }
+        } else {
+            Log::info("DevExtremeHandler: Using SQL-based approach");
 
-        // Apply SQL-based sorting
-        $this->applySafeMainTableSorting($sort);
+            // Apply SQL-based sorting only for main table fields
+            $this->applySafeMainTableSorting($sort);
 
-        // Get total count before applying pagination
-        $totalCount = $this->query->count();
+            // Get total count before applying pagination
+            $totalCount = $this->query->count();
 
-        // Apply pagination at SQL level
-        $results = $this->query->skip($skip)->take($take)->get();
+            // Apply pagination
+            $results = $this->query->skip($skip)->take($take)->get();
 
-        // Transform data if transformer is provided
-        if ($this->config['dataTransformer'] && is_callable($this->config['dataTransformer'])) {
-            $results = $results->map($this->config['dataTransformer']);
+            // Transform data if transformer is provided
+            if ($this->config['dataTransformer'] && is_callable($this->config['dataTransformer'])) {
+                $results = $results->map($this->config['dataTransformer']);
+            }
         }
 
         return response()->json([
             'data' => $results,
-            'totalCount' => $totalCount,
-            'strategy' => 'sql_only'
+            'totalCount' => $totalCount
         ]);
     }
 
     /**
-     * Handle requests with related fields but no encrypted fields
+     * Check if we need post-processing instead of SQL-based operations
      */
-    protected function handleHybridStrategy(int $skip, int $take, array $sort): JsonResponse
+    protected function needsPostProcessing(array $sort, array $filter): bool
     {
-        if (config('devextreme-encrypted.performance.debug_logging')) {
-            Log::info("DevExtremeHandler: Using hybrid strategy");
-        }
-
-        // For now, fall back to post-processing
-        // This can be enhanced based on specific requirements
-        return $this->handlePostProcessStrategy($skip, $take, $sort);
-    }
-
-    /**
-     * Handle requests that require post-processing
-     */
-    protected function handlePostProcessStrategy(int $skip, int $take, array $sort): JsonResponse
-    {
-        if (config('devextreme-encrypted.performance.debug_logging')) {
-            Log::info("DevExtremeHandler: Using post-process strategy");
-        }
-
-        // Check memory warning threshold
-        $recordCount = $this->query->count();
-        $maxRecords = config('devextreme-encrypted.performance.max_in_memory_records', 10000);
-
-        if ($recordCount > $maxRecords) {
-            Log::warning("DevExtremeHandler: Large dataset detected", [
-                'record_count' => $recordCount,
-                'max_recommended' => $maxRecords
-            ]);
-        }
-
-        // Get all data without sorting, then process in memory
-        $results = $this->query->get();
-
-        // Transform data first
-        if ($this->config['dataTransformer'] && is_callable($this->config['dataTransformer'])) {
-            $results = $results->map($this->config['dataTransformer']);
-        }
-
-        // Apply sorting after transformation
+        // Check sorting
         if (!empty($sort)) {
-            $results = $this->applyPostSorting($results, $sort);
+            foreach ($sort as $sortItem) {
+                if (isset($sortItem['selector'])) {
+                    $field = $sortItem['selector'];
+
+                    // If it's a related field or might be a related field, use post-processing
+                    if ($this->isRelatedField($field)) {
+                        return true;
+                    }
+                }
+            }
         }
 
-        // Get total count
-        $totalCount = $results->count();
+        // Check filtering - if any filters involve related fields, use post-processing
+        if (!empty($filter)) {
+            if ($this->hasRelatedFieldFilters($filter)) {
+                return true;
+            }
+        }
 
-        // Apply pagination manually
-        $results = $results->slice($skip, $take)->values();
-
-        return response()->json([
-            'data' => $results,
-            'totalCount' => $totalCount,
-            'strategy' => 'post_process'
-        ]);
+        return false;
     }
 
-    // ... (include other methods from the original DevExtremeHandler)
+    /**
+     * Check if a field is a related field
+     */
+    protected function isRelatedField(string $field): bool
+    {
+        // Direct dot notation
+        if (strpos($field, '.') !== false) {
+            return true;
+        }
+
+        // Check if field exists in any related model
+        foreach ($this->config['relatedModels'] as $relationName => $relatedModel) {
+            if ($relatedModel && $this->isFieldInRelatedModel($relatedModel, $field)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Recursively check if filters contain related fields
+     */
+    protected function hasRelatedFieldFilters(array $filter): bool
+    {
+        // Handle simple filter array [field, operator, value]
+        if (count($filter) === 3 && !is_array($filter[0]) && is_string($filter[0])) {
+            return $this->isRelatedField($filter[0]);
+        }
+
+        // Handle complex nested filters
+        foreach ($filter as $filterItem) {
+            if (is_array($filterItem)) {
+                if ($this->hasRelatedFieldFilters($filterItem)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Apply safe sorting only to main table fields (avoid JOINs)
+     */
+    protected function applySafeMainTableSorting(array $sort): void
+    {
+        if (!empty($sort) && is_array($sort)) {
+            foreach ($sort as $sortItem) {
+                if (isset($sortItem['selector'])) {
+                    $field = $sortItem['selector'];
+                    $direction = isset($sortItem['desc']) && $sortItem['desc'] ? 'desc' : 'asc';
+
+                    // Only sort by main table fields to avoid JOIN issues
+                    if (!$this->isRelatedField($field)) {
+                        $this->query->orderBy($field, $direction);
+                    }
+                }
+            }
+        } else {
+            // Apply default sorting
+            foreach ($this->config['defaultSort'] as $field => $direction) {
+                $this->query->orderBy($field, $direction);
+            }
+        }
+    }
+
+    /**
+     * Apply sorting after data transformation (in-memory)
+     */
+    protected function applyPostSorting($results, array $sort)
+    {
+        if (empty($sort)) {
+            return $results;
+        }
+
+        // Convert to array for sorting
+        $resultsArray = $results->toArray();
+
+        // Apply sorting in reverse order (since we're doing stable sorts)
+        foreach (array_reverse($sort) as $sortItem) {
+            if (isset($sortItem['selector'])) {
+                $field = $sortItem['selector'];
+                $direction = isset($sortItem['desc']) && $sortItem['desc'] ? 'desc' : 'asc';
+
+                Log::info("DevExtremeHandler: Applying post-sort", [
+                    'field' => $field,
+                    'direction' => $direction
+                ]);
+
+                usort($resultsArray, function($a, $b) use ($field, $direction) {
+                    $valueA = $a[$field] ?? '';
+                    $valueB = $b[$field] ?? '';
+
+                    // Handle null values
+                    if ($valueA === null && $valueB === null) return 0;
+                    if ($valueA === null) return 1;
+                    if ($valueB === null) return -1;
+
+                    // Handle numeric comparison
+                    if (is_numeric($valueA) && is_numeric($valueB)) {
+                        $result = $valueA <=> $valueB;
+                    } else {
+                        // String comparison (case insensitive)
+                        $result = strcasecmp((string)$valueA, (string)$valueB);
+                    }
+
+                    return $direction === 'desc' ? -$result : $result;
+                });
+            }
+        }
+
+        return collect($resultsArray);
+    }
+
+    /**
+     * Check if a field exists in a related model
+     */
+    protected function isFieldInRelatedModel($relatedModel, string $field): bool
+    {
+        if (!$relatedModel) {
+            return false;
+        }
+
+        // Get the model's fillable fields
+        $fillable = $relatedModel->getFillable();
+
+        // Check if the field is in fillable array
+        if (!empty($fillable) && in_array($field, $fillable)) {
+            return true;
+        }
+
+        // If fillable is empty or field not in fillable, check actual table structure
+        try {
+            $tableName = $relatedModel->getTable();
+            $columns = \Illuminate\Support\Facades\Schema::getColumnListing($tableName);
+            return in_array($field, $columns);
+        } catch (\Exception $e) {
+            // If we can't get the table structure, return false
+            return false;
+        }
+    }
 
     /**
      * Get default configuration
@@ -226,7 +311,4 @@ class DevExtremeHandler
         $freshQuery = clone $query;
         return new static($freshQuery, $config);
     }
-
-    // Add other necessary methods from the original implementation...
-    // (This is a simplified version - you'd include all methods from your original DevExtremeHandler)
 }
